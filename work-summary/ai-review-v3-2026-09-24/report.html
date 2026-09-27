@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>/ai-review v3 への刷新 - 2026-09-24</title>
+<style>
+:root{--accent:#2563eb;--success:#16a34a;--warning:#f59e0b;--danger:#dc2626;--bg:#f6f7f9;--card:#fff;--text:#111827;--sub:#6b7280;--border:#e5e7eb;}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Hiragino Sans","Yu Gothic",sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:32px 16px}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px}
+h1{margin:0 0 8px;font-size:1.5rem}
+h2{margin:0 0 16px;font-size:1.2rem;padding-left:12px;border-left:4px solid var(--accent);display:flex;align-items:center;gap:8px}
+h3{margin:16px 0 8px;font-size:1rem}
+.num{display:inline-block;background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:0 8px;font-size:.75rem;color:var(--sub)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.chip{background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:2px 10px;font-size:.8rem;color:var(--sub)}
+.lead{color:var(--sub);margin:8px 0 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 20px}
+.stat .n{font-size:2rem;font-weight:700;color:var(--accent);line-height:1}
+.stat .l{font-size:.8rem;color:var(--sub);margin-top:6px}
+.stat.ok .n{color:var(--success)} .stat.warn .n{color:var(--warning)}
+ol.tl{list-style:none;padding:0;margin:0;counter-reset:s}
+ol.tl>li{counter-increment:s;position:relative;padding:0 0 14px 44px}
+ol.tl>li::before{content:counter(s);position:absolute;left:0;top:0;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-size:.85rem;display:flex;align-items:center;justify-content:center}
+ol.tl ul{margin:4px 0 0;padding-left:18px}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{background:var(--bg)}
+.b{display:inline-block;padding:1px 8px;border-radius:999px;font-size:.72rem;font-weight:600;color:#fff}
+.b.new{background:var(--success)} .b.upd{background:var(--accent)} .b.del{background:var(--danger)}
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.col{background:var(--bg);border-radius:10px;padding:14px}
+.col h3{margin-top:0}
+.col ul{padding-left:18px;margin:0}
+code{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0 4px;font-size:.85em}
+.tag{display:inline-block;background:#eff6ff;color:var(--accent);border-radius:6px;padding:0 6px;font-size:.85em}
+@media (max-width:600px){.grid,.cols{grid-template-columns:1fr}}
+@media print{body{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}.card{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="card">
+  <h1>/ai-review v3 への刷新（ベンチマークで磨いた push 前ゲート）</h1>
+  <div class="chips"><span class="chip">2026-09-23〜24</span><span class="chip">~/.claude・ベンチマーク用リポジトリ</span><span class="chip">実装・検証</span></div>
+  <p class="lead">v2 までの「ECC 版 /code-review ＋ Codex ＋ 公式 /security-review」を、ベンチマークで確かめた自前の観点に置き換え、結論を BLOCK / MUST-ADDRESS / PASS の 3 段にした。完成したゲートを v3 自身の変更にかけて 10 周し、60 件以上の穴を直してから配布した。</p>
+</div>
+
+<div class="grid">
+  <div class="stat ok"><div class="n">1.000</div><div class="l">自前観点 v5（確認用 OWASP 110 件）</div></div>
+  <div class="stat"><div class="n">10</div><div class="l">自己レビューの周回</div></div>
+  <div class="stat"><div class="n">70</div><div class="l">項目にした指摘（ほぼ全件を修正）</div></div>
+  <div class="stat warn"><div class="n">2</div><div class="l">残した Issue</div></div>
+</div>
+
+<div class="card">
+  <h2><span class="num">01</span>作業の目的・背景</h2>
+  <ul>
+    <li><b>目的</b>: ベンチマークの結果をもとに <code>/ai-review</code>（push 前のローカルの第 1 ゲート）を磨く。品質を上げ、脆弱性をローカルで潰し、PR のレビュー Bot の負担を減らす。品質と検証を重視し、AI の確認の手間が増えることは許容する。</li>
+    <li><b>きっかけ</b>:
+      <ul>
+        <li>GPT-6 Sol / Luna / Astra、Opus 5.5 が出た。</li>
+        <li><code>~/.claude/commands/code-review.md</code>（ECC）が組み込みの <code>/code-review</code> を上書きしていて、v2 のゲートも過去のベンチ値も ECC 版で動いていたと判明した。</li>
+      </ul></li>
+    <li><b>制約</b>:
+      <ul>
+        <li>公開版は Claude Code と Codex CLI だけで動く（ECC・JEV は外す）。</li>
+        <li>自前の観点に OWASP Benchmark 固有の癖を書かない。</li>
+        <li>確認用データは測るだけで、中身を見て直さない。</li>
+      </ul></li>
+  </ul>
+</div>
+
+<div class="card">
+  <h2><span class="num">02</span>実施した内容</h2>
+  <ol class="tl">
+    <li><b>新モデルを公式の機能のまま素の環境で測った</b>
+      <ul>
+        <li>Codex 純正 review: GPT-6 Sol 0.964、Luna 0.818、Astra 0.945、GPT-5.6 Sol 0.982。</li>
+        <li>素の <code>/code-review</code>: Opus 5.5 0.855、Opus 5 0.491。</li>
+      </ul></li>
+    <li><b>自前の観点を v1 から v5 まで作った</b>（分析用データで誤判定の原因を分類）
+      <ul>
+        <li>v1: 誤検知が多い（0.745）。</li>
+        <li>v2: 0.982。</li>
+        <li>v3: 止めすぎ（バグのない 18 件中 15 件を BLOCK）。</li>
+        <li>v4: 結論を 3 段に。</li>
+        <li>v5: 3 文を修正して完成。</li>
+      </ul></li>
+    <li><b>確認用データで方式を決めた</b>
+      <ul>
+        <li>① 自前観点 v5 × Opus 5.5。確認用 OWASP で 1.000、バグ 46 件はすべて検出、バグのない 21 件で止めすぎは 0。</li>
+        <li>② 純正 <code>codex exec review</code> × GPT-6 Sol。自前の観点を渡すと悪化した（0.964 から 0.800）。</li>
+        <li>③ 昇格は own-security × Opus 5.5。確認用 OWASP で 1.000（公式 <code>/security-review</code> は 0.727）。</li>
+      </ul></li>
+    <li><b>v3 を実装した</b>
+      <ul>
+        <li>自前の観点 2 本、<code>gate.py</code>（下限・判定表の検査・記録・項目の処理）、<code>resolve-item.sh</code>。</li>
+        <li>MUST-ADDRESS は 1 件ずつ、「直す」か「理由を記録し、別のサブエージェントが検証する」で片づける。高リスクはユーザーの承認が要る。</li>
+        <li><code>--deep</code>（5 本）を足した。JEV を削除した。</li>
+      </ul></li>
+    <li><b>v3 を v3 自身の変更（約 2,500 行）にかけて 10 周</b>
+      <ul>
+        <li>レビュー対象のファイルが開発者の権限で動く経路を 4 種類塞いだ（どれも実測で確認）。
+          <ul>
+            <li><span class="tag">git -c</span> の任意実行</li>
+            <li>設定・フックの混入</li>
+            <li><span class="tag">json.py</span> の読み込み</li>
+            <li>同名スクリプトの実行</li>
+          </ul></li>
+        <li>記録の抜け道を塞いだ（比較範囲を狭める、<code>gate.py</code> を直接呼んで承認を書く、ダミー実行）。</li>
+        <li>結論は最後の行の <code>VERDICT: X</code> で読む形にした。人の承認は端末で ID を打ち込む形にした。</li>
+      </ul></li>
+    <li><b>配布した</b>
+      <ul>
+        <li>個人の設定リポジトリへ push、クラウド用の配布リポジトリへ同期、個人のプロジェクトに PR。</li>
+        <li>CLAUDE.md と Codex 用 AGENTS.md の v2 の記述も v3 に合わせた。</li>
+      </ul></li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2><span class="num">03</span>変更したファイル一覧</h2>
+  <table>
+    <tr><th>種別</th><th>パス</th><th>備考</th></tr>
+    <tr><td><span class="b new">新規</span></td><td><code>~/.claude/skills/ai-review/DESIGN-v3.md</code></td><td>設計の正本</td></tr>
+    <tr><td><span class="b new">新規</span></td><td><code>prompts/own-review.md</code>・<code>own-security.md</code></td><td>自前の観点（v5・v1）</td></tr>
+    <tr><td><span class="b new">新規</span></td><td><code>scripts/gate.py</code>・<code>resolve-item.sh</code>・<code>probe-permissions.sh</code></td><td>下限・記録・項目の処理、実機の権限確認</td></tr>
+    <tr><td><span class="b upd">更新</span></td><td><code>SKILL.md</code>・<code>run-reviews.sh</code>・<code>record-gate.sh</code>・<code>hooks/pre-push</code>・テスト 2 本</td><td>v3 化と 10 周の修正</td></tr>
+    <tr><td><span class="b del">削除</span></td><td><code>scripts/jev-judge.py</code>・<code>jev-escalation.py</code></td><td>JEV を外した</td></tr>
+    <tr><td><span class="b upd">更新</span></td><td><code>~/.claude/CLAUDE.md</code>・<code>env/codex/AGENTS.md</code>・<code>~/.codex/AGENTS.md</code></td><td>ゲートの記述を v3 に</td></tr>
+    <tr><td><span class="b upd">更新</span></td><td><code>~/.git-hooks/pre-push</code></td><td>v3 のフック（v2 の控えあり）</td></tr>
+    <tr><td><span class="b upd">更新</span></td><td><code>docs/ai-review-deep-plan.md</code> ほか</td><td>計画・結論・実運用の記録</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2><span class="num">04</span>結果・残課題・次のアクション</h2>
+  <div class="cols">
+    <div class="col"><h3>完了</h3><ul>
+      <li>v3 を個人の設定・配布用リポジトリ・個人のプロジェクト（PR）へ配布</li>
+      <li>回帰テスト 169/169・41/41、実機の確認 14/14</li>
+      <li>own-review が主軸（70 件中 43 件、単独 21 件）</li>
+      <li>own-security は単独 9 件。<span class="tag">json.py</span> の任意実行を見つけたのは own-security だけ</li>
+      <li><code>--deep</code> の追加 2 本は単独 8 件。推奨条件で使うのが妥当</li>
+      <li>所要時間: 通常 3.5〜7 分、深掘り込み 7〜15 分、<code>--deep</code> 7.5〜15 分</li>
+    </ul></div>
+    <div class="col"><h3>残課題</h3><ul>
+      <li>後回しにした Medium 以下の指摘（個人の Issue で管理）</li>
+      <li>「後回し（Issue 化）」の片づけ方が無い</li>
+      <li>コストは未計測</li>
+      <li>own-security の「要確認」は 8 件中 4 件が実測で成り立たず</li>
+    </ul></div>
+    <div class="col"><h3>次のアクション</h3><ul>
+      <li>配布先の PR のマージ（手順書の v3 化の後）</li>
+      <li>「後回し」の片づけ方を足す</li>
+      <li>一般のアプリの変更で同じ傾向になるかを記録する</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2><span class="num">05</span>作業内容のまとめ</h2>
+  <p>ベンチマークで「どの観点・どのモデルが実際に効くか」を確認用データで確かめてから、<code>/ai-review</code> を v3 に刷新した。v3 は Claude 側を自前観点 v5（Opus 5.5）、Codex 側を純正 review（GPT-6 Sol）、昇格を own-security にして、結論を 3 段にした。</p>
+  <p>完成したゲートを自分自身にかけると、レビュアーの起動方法そのものに、開発者の権限でコードが動く穴が複数見つかった。どれも実測で確かめて塞いだ。</p>
+  <p>直すたびに新しい指摘が出て周回が止まらなかったので、「BLOCK・High だけ直し、Medium 以下は Issue」という止める条件を決めて配布した。</p>
+</div>
+
+</div>
+</body>
+</html>

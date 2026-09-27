@@ -1,0 +1,20 @@
+{
+  "name": "ai-review",
+  "owner": {
+    "name": "sinoda1114",
+    "url": "https://github.com/sinoda1114"
+  },
+  "metadata": {
+    "description": "Push 前に通す AI のレビューゲート（Claude と Codex の二重レビュー）",
+    "version": "3.0.0"
+  },
+  "plugins": [
+    {
+      "name": "ai-review",
+      "description": "Push 前の AI レビューゲート。自前の観点（Claude）と Codex 純正 review を並列に走らせ、BLOCK / MUST-ADDRESS / PASS の 3 段で結論を出す。脆弱性とバグを止める。git の pre-push フックは install.sh で別途導入する",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/ai-review"]
+    }
+  ]
+}

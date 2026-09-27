@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>/ai-review Skill 作成 + 2 段ゲート運用化 - 2026-05-21</title>
+<style>
+  :root {
+    --accent: #2563eb;
+    --success: #16a34a;
+    --warning: #f59e0b;
+    --danger: #dc2626;
+    --bg: #f6f7f9;
+    --card: #fff;
+    --text: #111827;
+    --sub: #6b7280;
+    --border: #e5e7eb;
+    --code-bg: #0f172a;
+    --code-fg: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 32px 16px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+  .header h1 { margin: 0 0 12px; font-size: 1.7rem; }
+  .header .lead { color: var(--sub); margin: 12px 0 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { display: inline-block; background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; font-size: 0.85rem; color: var(--sub); }
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; }
+  .stat .num { font-size: 2rem; font-weight: 700; color: var(--accent); line-height: 1; }
+  .stat .lbl { color: var(--sub); font-size: 0.85rem; margin-top: 6px; }
+  .section h2 {
+    margin: 0 0 16px;
+    font-size: 1.2rem;
+    padding-left: 12px;
+    border-left: 4px solid var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .num-chip { display: inline-block; background: var(--accent); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; }
+  .section h3 { font-size: 1rem; margin: 20px 0 8px; color: var(--text); }
+  .section p, .section li { font-size: 0.95rem; }
+  ol.timeline { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+  ol.timeline > li { counter-increment: step; position: relative; padding: 12px 0 12px 52px; border-bottom: 1px dashed var(--border); }
+  ol.timeline > li:last-child { border-bottom: 0; }
+  ol.timeline > li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 12px;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.95rem;
+  }
+  ol.timeline li strong { display: block; margin-bottom: 4px; }
+  .phase-label { display: inline-block; background: #eef2ff; color: var(--accent); border-radius: 4px; padding: 1px 8px; font-size: 0.75rem; font-weight: 600; margin-right: 8px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 16px; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--bg); font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; color: #fff; white-space: nowrap; }
+  .badge.new { background: var(--success); }
+  .badge.upd { background: var(--accent); }
+  .badge.del { background: var(--danger); }
+  .badge.tmp { background: var(--warning); }
+  .threecol { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .threecol .mini { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .threecol .mini h4 { margin: 0 0 8px; font-size: 0.9rem; color: var(--accent); }
+  .threecol .mini.warn h4 { color: var(--warning); }
+  .threecol .mini.next h4 { color: var(--success); }
+  .threecol ul { padding-left: 18px; margin: 0; }
+  .tag { display: inline-block; background: #eef2ff; color: var(--accent); border-radius: 4px; padding: 1px 6px; font-size: 0.8rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { background: var(--bg); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+  pre code { background: transparent; border: 0; color: inherit; padding: 0; }
+  .summary-box { background: linear-gradient(180deg, #f0f7ff 0%, #fff 100%); border-left: 4px solid var(--accent); }
+  .gate-flow { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; white-space: pre; overflow-x: auto; }
+  @media (max-width: 600px) { .summary-grid, .threecol { grid-template-columns: 1fr; } }
+  @media print { body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .card { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="card header">
+    <h1>/ai-review Skill 作成 + 2 段ゲート運用化</h1>
+    <div class="meta">
+      <span class="chip">2026-05-21</span>
+      <span class="chip">スキル開発 / 実機検証 / 不具合修正 / 運用設計</span>
+      <span class="chip">検証先: 別プロジェクト</span>
+    </div>
+    <p class="lead">「push 前のローカル AI レビュー」を実現する全プロジェクト共通 Claude Code Skill <span class="tag">/ai-review</span> を新規作成。Windows 環境のハマりどころ 6 点を解消し、HTML 出力を刷新、最終的に <span class="tag">/ai-review</span> → コミット → <span class="tag">/security-review</span> → push の <strong>2 段ゲート運用</strong>を CLAUDE.md に明文化した。</p>
+  </header>
+
+  <div class="summary-grid">
+    <div class="stat"><div class="num">6</div><div class="lbl">解消した不具合 (P1×3 / P2×2 / P3×1)</div></div>
+    <div class="stat"><div class="num">2</div><div class="lbl">追加対応 (P4 UX / P5 運用設計)</div></div>
+    <div class="stat"><div class="num">25.4s</div><div class="lbl">Codex 実行時間 (再検証時)</div></div>
+    <div class="stat"><div class="num">2</div><div class="lbl">ゲート設計 (commit前 + push前)</div></div>
+  </div>
+
+  <section class="card section">
+    <h2><span class="num-chip">01</span>作業の目的・背景</h2>
+    <p>ローカル開発で <strong>push する前</strong> に、AI による品質ゲートを確実に通したかった。これまでは Codex / Claude Code / <code>/security-review</code> を都度手で叩いていて、抜け漏れと手間が発生していた。</p>
+    <p>最終目標は「push 前のローカル AI レビュー運用」の自動化。これを <strong>2 段ゲート</strong> で実現する：</p>
+    <ol>
+      <li><strong>コミット前</strong>: <span class="tag">/ai-review</span>（本スキル）で未コミット差分の二重レビュー</li>
+      <li><strong>コミット後 push 前</strong>: <span class="tag">/security-review</span>（CC 内蔵）でブランチ全体の深掘り</li>
+    </ol>
+    <p>両ゲートを通過するまで push しない、というルールをグローバル指示書にも織り込んだ。</p>
+    <div class="gate-flow">ローカル変更
+   ↓
+[ゲート1] /ai-review          ← 未コミット差分の二重レビュー
+   ↓ OK
+git add / git commit
+   ↓
+[ゲート2] /security-review    ← ブランチ全体の深掘りセキュリティレビュー
+   ↓ OK
+git push / PR</div>
+  </section>
+
+  <section class="card section">
+    <h2><span class="num-chip">02</span>実施した内容</h2>
+    <ol class="timeline">
+      <li><span class="phase-label">Phase 1</span><strong>スキル作成と初回検証</strong>PRD 受領 → Plan 策定 → SKILL.md 初版作成 → 実機検証準備（<code>test/ai-review-trial</code> ブランチで <code>lib/test-ai-review-sample.ts</code> に XSS / APIキー / コマンドインジェクション / 入力検証なしを仕込み）→ 初回検証で P1〜P3 を発見 → SKILL.md §3 全面書き換えで全件解消</li>
+      <li><span class="phase-label">Phase 2</span><strong>再検証</strong>robocopy でリポジトリ丸ごとバックアップ（5.3 MB）→ 別セッションで <span class="tag">/ai-review</span> 再実行 → Codex 25.38 秒で正常完了、High 2 / Medium 3 / Low 1 検出、両形式レポート生成、HEAD 不変</li>
+      <li><span class="phase-label">Phase 3</span><strong>テスト痕跡の片付け</strong>テスト用ファイル・引継書・テスト出力・テストブランチを削除し、<code>.gitignore</code> に <code>.claude/settings.local.json</code> / <code>.review-reports/</code> を追記</li>
+      <li><span class="phase-label">Phase 4</span><strong>HTML 出力の改善 (P4 - UX)</strong>HTML が <code>&lt;pre&gt;</code> ラッパだけで Markdown 記法が解釈されず読みづらかった問題を発見。§7 を全面書き換えし、CC が md と html を別々にセマンティック構築する方針に変更（7.1〜7.7）</li>
+      <li><span class="phase-label">Phase 5</span><strong>2 段ゲート運用の設計 (P5)</strong>「<span class="tag">/security-review</span> を毎回呼ぶか」を議論し、自動連鎖は不可（スコープがズレている）と判断 → 直列に並べる「2 段ゲート」運用に正式化。SKILL.md §8 を全面書き換え（8.1 スコープ違い / 8.2 ワークフロー図 / 8.3 結論 3 パターン / 8.4 <code>origin/HEAD</code> 対処）し、<code>~/.claude/CLAUDE.md</code> に「Push 前ローカル AI レビュー（2 段ゲート運用）」セクションを追記</li>
+      <li><span class="phase-label">Phase 6</span><strong>レポート整理</strong><span class="tag">/work-summary</span> の初回出力を 検証用プロジェクト配下から この記録用のディレクトリの <code>work-summary/</code> へ移動。検証用プロジェクト側 <code>.gitignore</code> の <code>work-summary/</code> 行は保険として残置</li>
+    </ol>
+  </section>
+
+  <section class="card section">
+    <h2><span class="num-chip">03</span>変更したファイル一覧</h2>
+
+    <h3>新規作成（永続）</h3>
+    <table>
+      <thead><tr><th style="width:90px">種別</th><th>パス</th><th>備考</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge new">新規</span></td><td><code>~/.claude/skills/ai-review/SKILL.md</code></td><td>スキル本体。本番運用可</td></tr>
+        <tr><td><span class="badge new">新規</span></td><td><code>~/.claude/plans/8-claude-code-cc-prd-snappy-orbit.md</code></td><td>計画ファイル</td></tr>
+        <tr><td><span class="badge upd">更新</span></td><td><code>~/.claude/CLAUDE.md</code></td><td>2 段ゲート運用セクション追記</td></tr>
+      </tbody>
+    </table>
+
+    <h3>バックアップ（1 週間後削除予定）</h3>
+    <table>
+      <thead><tr><th style="width:90px">種別</th><th>パス</th><th>サイズ</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge tmp">一時</span></td><td>検証用プロジェクトのバックアップ</td><td>5.3 MB</td></tr>
+      </tbody>
+    </table>
+
+    <h3>検証用に作成 → 削除済み</h3>
+    <table>
+      <thead><tr><th style="width:90px">種別</th><th>パス</th><th>備考</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge del">削除</span></td><td><code>lib/test-ai-review-sample.ts</code></td><td>検証用プロジェクト内・脆弱テストコード</td></tr>
+        <tr><td><span class="badge del">削除</span></td><td><code>AI-REVIEW-TEST-HANDOFF.md</code></td><td>別セッション用引継書</td></tr>
+        <tr><td><span class="badge del">削除</span></td><td><code>.review-reports/</code></td><td>検証用プロジェクト内・テスト出力</td></tr>
+        <tr><td><span class="badge del">削除</span></td><td>ブランチ <code>test/ai-review-trial</code></td><td>テスト用ブランチ</td></tr>
+      </tbody>
+    </table>
+
+    <h3>検証用プロジェクト側の残更新</h3>
+    <table>
+      <thead><tr><th style="width:90px">種別</th><th>パス</th><th>内容</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge upd">更新</span></td><td><code>.gitignore</code></td><td><code>.claude/settings.local.json</code> / <code>.review-reports/</code> / <code>work-summary/</code> を追記</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card section">
+    <h2><span class="num-chip">04</span>結果・残課題・次のアクション</h2>
+    <div class="threecol">
+      <div class="mini">
+        <h4>完了</h4>
+        <ul>
+          <li>/ai-review 本番運用可</li>
+          <li>2 ラウンド検証で全機能動作確認</li>
+          <li>Codex 25.4s 安定動作</li>
+          <li>脆弱性 4 件すべて検出</li>
+          <li>HTML 出力刷新 (P4)</li>
+          <li>2 段ゲート運用正式化 (P5)</li>
+        </ul>
+      </div>
+      <div class="mini warn">
+        <h4>残課題</h4>
+        <ul>
+          <li>バックアップフォルダ手動削除（1 週間後目安）</li>
+          <li>検証用プロジェクト側 .gitignore 追記分のコミット</li>
+          <li>新 HTML 出力の実機確認</li>
+          <li>2 段ゲート全体の通し試運転</li>
+        </ul>
+      </div>
+      <div class="mini next">
+        <h4>次のアクション</h4>
+        <ul>
+          <li>新セッションで 2 段ゲートを 1 度通す</li>
+          <li>別プロジェクトで /ai-review 試運転</li>
+          <li>§10 検証履歴のアーカイブ整理</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card section summary-box">
+    <h2><span class="num-chip">05</span>作業内容のまとめ</h2>
+    <p>「push 前のローカル AI レビュー」を実現する全プロジェクト共通 Claude Code Skill <span class="tag">/ai-review</span> を新規作成し、Next.js 検証用プロジェクトで実機検証を 2 ラウンド実施。Windows 環境固有のハマりどころ 6 点（P1〜P3）を SKILL.md §3 全面書き換えで解消し、HTML 出力の視認性問題（P4）と運用設計（P5）も追加対応した。最終的に「<span class="tag">/ai-review</span>（未コミット差分） → コミット → <span class="tag">/security-review</span>（ブランチ全体） → push」という <strong>2 段ゲート運用</strong>を <code>~/.claude/CLAUDE.md</code> に明文化し、全プロジェクト共通の標準として定着させた。本番運用可能な状態で完了。</p>
+  </section>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>/ai-review v2 → v3 ビフォーアフター</title>
+<style>
+:root{--accent:#2563eb;--success:#16a34a;--warning:#f59e0b;--danger:#dc2626;--bg:#f6f7f9;--card:#fff;--text:#111827;--sub:#6b7280;--border:#e5e7eb;--old:#9ca3af;--oldbg:#f3f4f6;--newbg:#eff6ff}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Hiragino Sans","Yu Gothic",sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:32px 16px}
+.wrap{max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px}
+h1{margin:0 0 6px;font-size:1.55rem}
+h2{margin:0 0 14px;font-size:1.2rem;padding-left:12px;border-left:4px solid var(--accent)}
+h3{margin:18px 0 8px;font-size:1rem}
+p{margin:6px 0}
+.lead{color:var(--sub)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.chip{background:var(--bg);border:1px solid var(--border);border-radius:999px;padding:2px 10px;font-size:.8rem;color:var(--sub)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{background:var(--bg);font-weight:600}
+td.old{color:#4b5563}
+td.new{background:var(--newbg)}
+code{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:0 4px;font-size:.85em}
+.tag{display:inline-block;border-radius:6px;padding:0 6px;font-size:.78rem;font-weight:600}
+.tag.b{background:#fee2e2;color:var(--danger)} .tag.m{background:#fef3c7;color:#b45309} .tag.p{background:#dcfce7;color:var(--success)} .tag.n{background:var(--newbg);color:var(--accent)}
+/* flow */
+.flows{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.flow{border-radius:12px;padding:16px}
+.flow.v2{background:var(--oldbg)} .flow.v3{background:var(--newbg)}
+.flow h3{margin:0 0 10px}
+.step{background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:.86rem;position:relative}
+.step b{display:block;font-size:.9rem}
+.step.chg{border:2px solid var(--accent)}
+.step.gone{border-style:dashed;color:var(--old)}
+.arrow{text-align:center;color:var(--sub);font-size:.9rem;line-height:1.4}
+.branch{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.branch .step{font-size:.8rem;padding:6px 8px}
+.par{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.par .step{font-size:.8rem;padding:6px 8px}
+.note{font-size:.78rem;color:var(--sub);margin-top:8px}
+.kind{display:inline-block;border-radius:6px;padding:0 6px;font-size:.72rem;font-weight:700;margin-bottom:2px}
+.k-own{background:#dbeafe;color:#1d4ed8} .k-native{background:#dcfce7;color:#15803d} .k-other{background:#fee2e2;color:#b91c1c}
+.who{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.who .side{border-radius:10px;padding:16px;border:2px solid}
+.who .own{border-color:#93c5fd;background:#eff6ff} .who .native{border-color:#86efac;background:#f0fdf4}
+.who h3{margin:0 0 6px}
+.who pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font-size:.78rem;white-space:pre-wrap;margin:8px 0}
+@media (max-width:720px){.who{grid-template-columns:1fr}}
+.legend{font-size:.8rem;color:var(--sub);margin:4px 0 0}
+.legend span{display:inline-block;border:2px solid var(--accent);border-radius:4px;width:14px;height:10px;vertical-align:middle;margin-right:4px}
+/* mechanism */
+.mech{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.box{background:var(--bg);border-radius:10px;padding:14px}
+.box h3{margin-top:0}
+.box ul,.card ul{padding-left:20px;margin:6px 0}
+.pipeline{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.84rem}
+.pipeline .p{background:#fff;border:1px solid var(--border);border-radius:8px;padding:4px 10px}
+.pipeline .x{color:var(--sub)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px}
+.stat .n{font-size:1.8rem;font-weight:700;color:var(--accent);line-height:1.1}
+.stat .l{font-size:.8rem;color:var(--sub);margin-top:4px}
+@media (max-width:720px){.flows,.mech{grid-template-columns:1fr}}
+@media print{body{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}.card{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="card">
+  <h1>/ai-review v2 → v3 ビフォーアフター</h1>
+  <div class="chips"><span class="chip">v2: 2026-09-11</span><span class="chip">v3: 2026-09-23〜24</span><span class="chip">push 前のローカルゲート</span><span class="chip">正本: ~/.claude/skills/ai-review/</span></div>
+  <p class="lead">v3 では、レビューの中身を「他人のコマンド」から「ベンチマークで確かめた自前の観点」に替え、結論を 3 段にしました。止めるほどではない指摘も、1 件ずつ片づけ終わるまで push を止めます。レビュアーの起動環境も、レビュー対象のコードに乗っ取られないように隔離しました。</p>
+</div>
+
+<div class="grid">
+  <div class="stat"><div class="n">3 段</div><div class="l">結論（v2 は pass / fix / block）</div></div>
+  <div class="stat"><div class="n">1.000</div><div class="l">Claude 側の自前観点（確認用 OWASP 110 件）</div></div>
+  <div class="stat"><div class="n">2 → 5 本</div><div class="l">通常 → --deep のレビュアー数</div></div>
+  <div class="stat"><div class="n">14</div><div class="l">実機で確かめる権限の検査項目</div></div>
+</div>
+
+<div class="card">
+  <h2>0. 2 人のレビュアーの正体（ここが一番の違い）</h2>
+  <div class="who">
+    <div class="side own">
+      <span class="kind k-own">自前のプロンプト</span>
+      <h3>Claude 側（own-review）</h3>
+      <p>私たちが書いたプロンプト <code>prompts/own-review.md</code>（約 120 行）の<b>本文を、そのまま <code>claude -p</code> に渡す</b>。Claude Code の <code>/code-review</code> などのスラッシュコマンドは<b>使わない</b>（公式版に指示を足したものでもない）。</p>
+      <pre>claude -p "&lt;own-review.md の本文&gt;" \
+  --model claude-opus-5-5 --effort high \
+  --setting-sources "" --safe-mode ...</pre>
+      <p class="note">理由: 公式 <code>/code-review</code> は素の状態で Opus 5.5 が 0.855、Opus 5 が 0.491。ECC 版と公式版の見落とし・止めすぎを分析して自前で書き、v5 は確認用データで 1.000。昇格の own-security も同じく自前のプロンプト。</p>
+    </div>
+    <div class="side native">
+      <span class="kind k-native">純正コマンドのまま</span>
+      <h3>Codex 側（codex-review）</h3>
+      <p>Codex CLI の<b>純正 review 機能をそのまま</b>使う。独自の指示やプロンプトは<b>一切渡さない</b>。</p>
+      <pre>codex exec review --base origin/main \
+  -m gpt-6-sol -c model_reasoning_effort=high \
+  -c sandbox_mode=read-only ...</pre>
+      <p class="note">理由: 純正のままで 0.964 と十分に高く、自前のプロンプトを渡すと 0.800 に下がった。</p>
+    </div>
+  </div>
+  <p class="note">v2 では、Claude 側は「公式 /code-review」のつもりが、実際は第三者製の ECC のコマンドが動いていた（<span class="kind k-other">他人のコマンド</span>）。v3 はスラッシュコマンドに頼らないので、コマンドの上書きの影響を受けない。</p>
+</div>
+
+<div class="card">
+  <h2>1. 何が変わったか（一覧）</h2>
+  <table>
+    <tr><th style="width:18%">項目</th><th style="width:38%">v2（ビフォー）</th><th>v3（アフター）</th></tr>
+    <tr><td>Claude 側のレビュー</td><td class="old">組み込み <code>/code-review</code> のつもりが、実際は ECC のコマンドに上書きされていた（Opus 5）</td><td class="new">同梱の自前観点 <code>prompts/own-review.md</code>（v5）× Opus 5.5。スラッシュコマンドではなく本文を直接渡すので、上書きの影響を受けない</td></tr>
+    <tr><td>Codex 側のレビュー</td><td class="old">純正 <code>codex exec review</code> × GPT-5.6 Sol</td><td class="new">純正のまま × GPT-6 Sol（精度はほぼ同じで約 2 倍速い）。独自の指示は渡さない（渡すと悪化した）</td></tr>
+    <tr><td>昇格の深掘り</td><td class="old">公式 <code>/security-review</code>（確信度 8 未満は報告しない仕様）</td><td class="new">自前のセキュリティ専用観点 <code>own-security</code> × Opus 5.5（確認用 OWASP で 1.000、公式は 0.727）</td></tr>
+    <tr><td>結論</td><td class="old">pass / fix / block。High があれば止め、それ以外は「読んで判断」</td><td class="new"><span class="tag b">BLOCK</span> <span class="tag m">MUST-ADDRESS</span> <span class="tag p">PASS</span> の 3 段。MUST-ADDRESS も片づけるまで push できない</td></tr>
+    <tr><td>指摘の片づけ</td><td class="old">仕組みなし（レポートを読んで人が判断）</td><td class="new">1 件ずつ「直す」か「理由を記録し、文脈を持たない別のサブエージェントが検証」。高リスクは人が端末で承認</td></tr>
+    <tr><td>結論の決まり方</td><td class="old">エージェントが突合して決める</td><td class="new">生の出力から機械的に決まる<b>下限（floor）</b>より軽くできない。エージェントが指摘を落とすと記録を拒む</td></tr>
+    <tr><td>強化版</td><td class="old">なし</td><td class="new"><code>--deep</code>: own-security・Fable 5.1・GPT-6 Astra を足して 5 本。差分が大きい・BLOCK がある・高リスクのパスのときに推奨を表示</td></tr>
+    <tr><td>レビュアーの隔離</td><td class="old">ユーザー設定のまま起動（CLAUDE.md・フック・allow ルールが効く）。道具の制限なし</td><td class="new">設定を読まずに起動し、道具は読み取りと読み取り系の git だけ。レビュー対象の <code>.claude/</code>・<code>.codex/</code> の設定も効かない</td></tr>
+    <tr><td>判断専用モデル（JEV）</td><td class="old">昇格トリガー F（意味で判定）、怪しい指摘の見分け</td><td class="new">削除（見分けは偶然と同等だった。公開版を Claude Code と Codex だけで動かすため）</td></tr>
+    <tr><td>回帰テスト</td><td class="old">フィクスチャ中心</td><td class="new"><code>test-gate.sh</code> 169 件・<code>test-isolation.sh</code> 41 件、実機の <code>probe-permissions.sh</code> 14 件</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>2. ワークフロー（ビフォーアフター）</h2>
+  <p class="legend"><span></span>青い枠は v3 で変わった・加わったところ。点線は無くなったところ。</p>
+  <div class="flows">
+    <div class="flow v2">
+      <h3>v2</h3>
+      <div class="step"><b>コードを書いて commit</b>何回でも</div>
+      <div class="arrow">↓ /ai-review</div>
+      <div class="step"><b>① 差分の取得</b>origin/HEAD..HEAD</div>
+      <div class="arrow">↓</div>
+      <div class="step"><b>② 昇格の判定</b>パス・内容・規模（grep）＋ JEV の意味判定</div>
+      <div class="arrow">↓ 並列</div>
+      <div class="par"><div class="step"><span class="kind k-other">他人のコマンド</span><br>/code-review（のつもりが ECC 版）× Opus 5</div><div class="step"><span class="kind k-native">純正コマンド</span><br>codex exec review × GPT-5.6 Sol</div></div>
+      <div class="arrow">↓</div>
+      <div class="step"><b>④ 突合</b>一致は採用、不一致は根拠を読んで検証</div>
+      <div class="arrow">↓ 昇格が必要なら</div>
+      <div class="step"><span class="kind k-native">公式コマンド</span><b>⑤ /security-review × Opus 5</b>確信度 8 未満は捨てる</div>
+      <div class="arrow">↓</div>
+      <div class="step"><b>⑦ レポートと記録</b>verdict = pass / fix / block</div>
+      <div class="arrow">↓</div>
+      <div class="step"><b>人がレポートを読む</b>直すか、そのまま push するかを判断</div>
+      <div class="arrow">↓ git push</div>
+      <div class="step"><b>pre-push フック</b>SHA の一致・block でない・昇格済み</div>
+    </div>
+    <div class="flow v3">
+      <h3>v3</h3>
+      <div class="step"><b>コードを書いて commit</b>何回でも</div>
+      <div class="arrow">↓ /ai-review（または --deep）</div>
+      <div class="step chg"><b>① HEAD の clean な worktree を作る</b>未コミットの変更や作業中の書き換えが混ざらない</div>
+      <div class="arrow">↓</div>
+      <div class="step chg"><b>② 昇格の判定（escalation.json）</b>パス・内容・規模・秘密情報。スクリプトが必ず作り、下限として使う。秘密情報があれば Codex を起動しない</div>
+      <div class="arrow">↓ 並列（設定を読まない隔離起動）</div>
+      <div class="par"><div class="step chg"><span class="kind k-own">自前のプロンプト</span><br>own-review（v5）を claude -p に直接 × Opus 5.5</div><div class="step chg"><span class="kind k-native">純正コマンドのまま</span><br>codex exec review × GPT-6 Sol（指示なし）</div></div>
+      <div class="note">--deep のときは own-security・Fable 5.1・GPT-6 Astra も同時に（計 5 本）</div>
+      <div class="arrow">↓</div>
+      <div class="step chg"><b>③ 判定表の検査</b>変更ファイルが全部表にあるか。欠けたら 1 回だけ回し直す</div>
+      <div class="arrow">↓</div>
+      <div class="step chg"><b>④ 下限（floor）と突合</b>生の出力から機械的に下限を出し、エージェントは指摘を和集合で書き起こす</div>
+      <div class="arrow">↓ 昇格が必要なら（自動）</div>
+      <div class="step chg"><span class="kind k-own">自前のプロンプト</span><b>⑤ own-security × Opus 5.5</b>攻撃面の一覧 → 経路の確認 → 判定</div>
+      <div class="arrow">↓</div>
+      <div class="step chg"><b>⑥ 記録（latest.json）</b>BLOCK / MUST-ADDRESS / PASS と項目の一覧</div>
+      <div class="arrow">↓ MUST-ADDRESS なら</div>
+      <div class="branch"><div class="step chg">直す → commit → 再実行</div><div class="step chg">理由を記録 → 別のサブエージェントが検証</div><div class="step chg">高リスクはユーザーが端末で承認</div></div>
+      <div class="arrow">↓ git push</div>
+      <div class="step chg"><b>pre-push フック</b>SHA・比較範囲の起点・block でない・項目が処理済み・昇格済み・ダミー実行でない</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>3. 仕組み（v3 の機構）</h2>
+
+  <h3>3.1 レビュアーの構成</h3>
+  <table>
+    <tr><th>名前</th><th>種類</th><th>中身</th><th>モデル / effort</th><th>いつ</th></tr>
+    <tr><td>own-review</td><td><span class="kind k-own">自前のプロンプト</span></td><td>同梱の自前観点（v5）。変更ファイルごとの判定表・段つきの指摘・3 段の結論</td><td>Opus 5.5 / high</td><td>毎回</td></tr>
+    <tr><td>codex-review</td><td><span class="kind k-native">純正コマンド</span></td><td>純正 <code>codex exec review</code>（独自の指示なし、read-only サンドボックス）</td><td>GPT-6 Sol / high</td><td>毎回</td></tr>
+    <tr><td>own-security</td><td><span class="kind k-own">自前のプロンプト</span></td><td>セキュリティ専用観点。攻撃面の一覧 → 経路の確認 → 判定</td><td>Opus 5.5 / high</td><td>昇格時・--deep</td></tr>
+    <tr><td>own-review-fable</td><td><span class="kind k-own">自前のプロンプト</span></td><td>own-review と同じ観点を別のモデルで</td><td>Fable 5.1 / high</td><td>--deep</td></tr>
+    <tr><td>codex-astra</td><td><span class="kind k-native">純正コマンド</span></td><td>純正 review を別のモデルで</td><td>GPT-6 Astra / high</td><td>--deep</td></tr>
+  </table>
+
+  <div class="mech">
+    <div class="box">
+      <h3>3.2 結論の決まり方（下限）</h3>
+      <div class="pipeline"><span class="p">生の出力</span><span class="x">→</span><span class="p">下限（floor）</span><span class="x">→</span><span class="p">最終 = 下限・エージェントの判断・項目の段の最も重いもの</span></div>
+      <ul>
+        <li>own-* は最後の行の <code>VERDICT: X</code> を読む。無ければ「結論」の節の最も重い語（止める側）</li>
+        <li>Codex は行頭の優先度 <code>[P0/P1]</code> → BLOCK、<code>[P2/P3]</code> → MUST-ADDRESS</li>
+        <li>結論を読めない・判定表が欠けた・失敗や未導入で結果が無い → MUST-ADDRESS の自動項目</li>
+        <li>読めた結果が 1 つも無い → BLOCK</li>
+        <li>レビュアーが MUST-ADDRESS 以上なのに、そのレビュアーの項目が無ければ記録を拒む（指摘を丸ごと落とさせない）</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>3.3 MUST-ADDRESS の片づけ（C 案）</h3>
+      <ul>
+        <li><b>直す</b>: 修正して commit し、新しい HEAD で再実行。同じ指摘が出なければ「再レビュー済み」として引き継ぐ</li>
+        <li><b>直さない</b>: コードで確かめられる理由を記録（「たぶん大丈夫」「今は起きない」は不可）→ 作業の文脈を持たない別のサブエージェントが「理由は誤っている前提」で反証を探す → 成り立てば upheld</li>
+        <li><b>高リスク</b>（昇格ルールのパス・注入型・セキュリティの指摘）: upheld の後、ユーザー自身が端末で <code>resolve-item.sh --approve-human</code> を実行し ID を打ち込む。AI は代行しない</li>
+        <li>BLOCK は直すしかない</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>3.4 昇格（深掘りを足す条件）</h3>
+      <ul>
+        <li>A: 高リスクのパス（認証・決済・スキーマ・CI・Dockerfile など）</li>
+        <li>B: 危険な API の追加行（<code>eval(</code> など）</li>
+        <li>C: 規模（ファイル数・追加行数の上限超え）</li>
+        <li>D: どれかのレビュアーがセキュリティの指摘を出した（記録時にも機械で要求）</li>
+        <li><code>escalation.json</code> の判定を下限にし、エージェントの <code>--escalate false</code> で打ち消せない。スキップはユーザーが明示したときだけ（記録に残る）</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>3.5 隔離と権限（レビュー対象に乗っ取られない）</h3>
+      <ul>
+        <li>Claude は <code>--setting-sources "" --safe-mode --strict-mcp-config</code>。ユーザーやレビュー対象の設定・フック・CLAUDE.md・MCP を読まない</li>
+        <li>道具は Read・Grep・Glob と読み取り系の git（diff・show・log など）だけ。<code>git -c</code>・<code>--output</code>・<code>--no-index</code> などは拒否</li>
+        <li>Codex は <code>-c notify=[] -c mcp_servers={}</code>。レビュー対象に <code>.codex/</code> があれば起動しない</li>
+        <li>秘密情報のファイルが差分にあれば、外部モデル（Codex）を起動しない</li>
+        <li>pre-push の python は <code>-I</code> で cwd を読み込まない</li>
+        <li>効いているかは <code>probe-permissions.sh</code> が実機で確かめる（印のファイルが作られないこと）</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>3.6 pre-push フックが拒むもの</h3>
+  <table>
+    <tr><th>v2</th><th>v3</th></tr>
+    <tr><td class="old">レビューした SHA と push する SHA が違う<br>昇格が必要なのに未実施<br>verdict が block</td>
+        <td class="new">左の 3 つに加えて:<br>verdict が must-address で、処理済みでない項目がある（直して再レビュー済み、または理由が検証済み＋高リスクは人の承認済み）<br>比較範囲の起点が origin/HEAD との merge-base でない（範囲を狭めた run）<br>v2 の記録（fix）・ダミー実行の記録<br>branch モード以外の記録（--local は push の根拠にならない）</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>4. なぜ変えたか（測った根拠）</h2>
+  <table>
+    <tr><th>判断</th><th>根拠（確認用データ）</th></tr>
+    <tr><td>Claude 側を自前観点 v5 に</td><td>2 つ目の確認用 OWASP 110 件で 1.000。バグのある 46 件はすべて検出。バグのない 21 件で止めすぎ 0（ECC 版は 4 件止めすぎ）</td></tr>
+    <tr><td>ECC に頼らない</td><td>組み込み <code>/code-review</code> は ECC に上書きされていた。素の <code>/code-review</code> は Opus 5.5 で 0.855・Opus 5 で 0.491 と、過去の 1.000 は条件の差で高く出ていた</td></tr>
+    <tr><td>Codex は純正 × GPT-6 Sol</td><td>確認用 OWASP 0.964。自前の観点を渡すと 0.800 に悪化。GPT-5.6 Sol と同等の精度で約 2 倍速い</td></tr>
+    <tr><td>昇格を own-security に</td><td>確認用 OWASP で 1.000（公式 <code>/security-review</code> は確信度で捨てる仕様で 0.727）。1 カテゴリ 82 秒（公式 153 秒）</td></tr>
+    <tr><td>3 段の結論と片づけ</td><td>v3 試作は BLOCK だけで止めすぎた（バグのない 18 件中 15 件）。止めない指摘を「直すか理由を検証」にすると、品質を落とさず止めすぎを防げた</td></tr>
+    <tr><td>隔離の強化</td><td>v3 を自分自身にかけた 10 周で、レビュー対象のファイルが開発者の権限で動く経路が 4 種類見つかった（<code>git -c</code>、設定のフック、<code>json.py</code>、同名スクリプト）。どれも実測で確かめて塞いだ</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>5. 残っている限界</h2>
+  <ul>
+    <li><b>人の承認と記録は、作業中の AI が書けるファイル（latest.json）にある</b>。端末での ID 入力で誤って書く経路は塞いだが、技術的に完全には強制できない（手順と記録で担保）</li>
+    <li><b>「後回し（Issue 化）」の片づけ方が無い</b>。本物だが急がない指摘も、直すか理由を検証するしかない</li>
+    <li>Medium 以下の残りの指摘（Codex が <code>AGENTS.md</code> を読む、<code>.review-reports</code> のシンボリックリンクなど）</li>
+    <li>コストは未計測。所要時間は通常 3.5〜7 分、深掘り込み 7〜15 分、<code>--deep</code> 7.5〜15 分</li>
+    <li>クラウド（claude.ai/code）では Codex CLI が無いので動かない。クラウドは <code>/code-review</code> で代替し、正式なゲートはローカルで通す</li>
+  </ul>
+</div>
+
+</div>
+</body>
+</html>
