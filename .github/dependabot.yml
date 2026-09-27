@@ -1,0 +1,7 @@
+# 依存更新の自動PR（sweeper が配布。編集は ci-standard 側で）
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
