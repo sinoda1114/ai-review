@@ -66,7 +66,7 @@ Claude 側の道具は `Read,Grep,Glob,読み取り系の git サブコマンド
 
 未コミットの変更はレビューされず、push にも含まれない。開始時の件数が `status.txt` の `uncommitted=N` に残るので、N > 0 なら結論に「未コミット N 件はレビュー対象外で、この push にも含まれない」と書く。
 
-`--local` のとき、自前観点は自分で `git diff --cached`・`git diff`・未追跡ファイルを読み、Codex は `--uncommitted` で全部を見る。v2 のように index へ `git add -A` する必要はない（**index に触れない**）。
+`--local` のとき、自前観点は自分で `git diff --cached`・`git diff`・未追跡ファイルを読み、Codex は `--uncommitted` で全部を見る。**index に触れない**（`git add` しない）。
 
 ## 3. 実行フロー
 
@@ -303,5 +303,3 @@ git config --global core.hooksPath ~/.git-hooks
 | 秘密情報が差分に含まれる | `run-reviews.sh` が自分で Codex を起動しない（`UNAVAILABLE codex-review` の未取得の項目になる）。`--no-codex` は付けない。ファイル名のみレポートに載せる |
 | own-security（昇格）が失敗 | `escalation_done=false` のまま記録。フックが止めるので再実行を案内 |
 
-## 8. 位置づけ（v2 からの変更）
-v2 はユーザー環境のコマンド上書きに頼った `/code-review` と Codex、昇格に公式 `/security-review` を使い、結論は pass / fix / block だった。v3 は Claude 側と昇格を同梱の自前観点に置き換え（`~/.claude/commands` に依存しない）、結論を BLOCK / MUST-ADDRESS / PASS の 3 段にし、MUST-ADDRESS を 1 件ずつ片づけるまで push を止める。判断専用モデルによる型付けと昇格トリガーは外した（別スキル `/pr-triage` には残る）。理由と測定値は `DESIGN-v3.md`。
