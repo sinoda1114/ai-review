@@ -687,6 +687,61 @@ echo c > c7.js; G add c7.js; G commit -qm c7
 AI_REVIEW_CAPACITY_WAIT=0 AI_REVIEW_DRY_FAIL="codex-review:mention" run --out .review-reports/e7
 grep -q '混み合い' .review-reports/e7/status.txt && ng "at capacity を含むだけの別の失敗で回し直した（S7）" || ok "Codex の混み合いのエラー行でなければ回し直さない（S7）"
 
+echo "13f. 差分レビューの穴（3 回目の /ai-review の指摘 T1〜T8）"
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# T1: run の後に重い項目を fixed にしても、差分レビューの記録では再レビュー済みにしない
+G checkout -q -b f1 origin/main
+echo 1 > w1.js; echo 2 > w2.js; G add w1.js w2.js; G commit -qm big
+run --out .review-reports/t1a; rec13 .review-reports/t1a --verdict block --items "$(mk B1 w1.js BLOCK correctness blk false t1)" >/dev/null 2>&1
+echo 3 >> w1.js; G commit -qam t1b
+run --out .review-reports/t1b
+bash "$RI" --id B1 --fixed --note n >/dev/null 2>&1
+rec13 .review-reports/t1b --verdict pass && ng "run の後に付けた重い fixed を差分レビューで通した（T1）" || ok "重い fixed が前回にあれば、差分レビューの記録を拒む（T1）"
+# T2: 規模の深掘りを求める周は、全体を見る
+[ "$(sget .review-reports/z2/scope.json scope)" = "full" ] && ok "規模の深掘り（F:size）を求める周は全体レビュー（T2）" || ng "T2: $(cat .review-reports/z2/scope.json)"
+# T3: 差分に入らず open に戻した fixed を、また fixed にしたら全体で確かめる
+G checkout -q -b f3 origin/main
+echo 1 > v1.js; echo 2 > v2.js; G add v1.js v2.js; G commit -qm big
+run --out .review-reports/t3a; rec13 .review-reports/t3a --verdict must-address --items "$(mk M1 v1.js MUST-ADDRESS correctness m false t3)" >/dev/null 2>&1
+bash "$RI" --id M1 --fixed --note n >/dev/null 2>&1
+echo 3 >> v2.js; G commit -qam t3b
+run --out .review-reports/t3b; rec13 .review-reports/t3b --verdict pass >/dev/null 2>&1
+bash "$RI" --id carry-M1 --fixed --note n >/dev/null 2>&1
+echo 4 >> v2.js; G commit -qam t3c
+run --out .review-reports/t3c
+[ "$(sget .review-reports/t3c/scope.json scope)" = "full" ] && ok "open に戻した fixed をまた fixed にしたら全体レビュー（T3）" || ng "T3: $(cat .review-reports/t3c/scope.json)"
+# T4: 引き継いだ項目にも、今の高リスクの決まりを当てる
+G checkout -q -b f4 origin/main
+mkdir -p hr; echo 1 > hr/x.js; echo 2 > u9.js; G add hr/x.js u9.js; G commit -qm big
+run --out .review-reports/t4a; rec13 .review-reports/t4a --verdict must-address --items "$(mk H1 hr/x.js MUST-ADDRESS correctness h false t4)" >/dev/null 2>&1
+printf 'max_files 1\npath ^hr/\n' > .ai-review/escalation-rules.local.txt
+echo 3 >> u9.js; G commit -qam t4b
+run --out .review-reports/t4b; rec13 .review-reports/t4b --verdict pass >/dev/null 2>&1
+python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); h=[i for i in d["must_address"] if i["id"].endswith("H1")][0]; sys.exit(0 if h["high_risk"] is True else 1)' && ok "引き継いだ項目に、後から足した path ルールの高リスクを当てる（T4）" || ng "T4: $(ids)"
+printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# T5: 日本語名のファイルを消して直した fixed も照合できる
+G checkout -q -b f5 origin/main
+echo 1 > 日本語.js; echo 2 > y5.js; echo 3 > y6.js; G add 日本語.js y5.js y6.js; G commit -qm big
+run --out .review-reports/t5a; rec13 .review-reports/t5a --verdict must-address --items "$(mk J1 日本語.js MUST-ADDRESS correctness j false t5)" >/dev/null 2>&1
+bash "$RI" --id J1 --fixed --note n >/dev/null 2>&1
+G rm -q 日本語.js; G commit -qm del
+git config core.quotePath true
+run --out .review-reports/t5b; rec13 .review-reports/t5b --verdict pass >/dev/null 2>&1
+git config --unset core.quotePath
+[ "$(sget .review-reports/t5b/scope.json scope)" = "incremental" ] || ng "t5b が差分レビューにならない: $(cat .review-reports/t5b/scope.json)"
+case " $(ids) " in *" prev-J1:fixed "*) ok "日本語名のファイルを消して直した fixed も再レビュー済み（T5）" ;; *) ng "T5: $(ids)" ;; esac
+# T6・T7: 引き継ぎだけでも must-address で記録でき、同じ run を記録し直せる
+G checkout -q -b f6 origin/main
+echo 1 > s1.js; echo 2 > s2.js; G add s1.js s2.js; G commit -qm big
+run --out .review-reports/t6a; rec13 .review-reports/t6a --verdict must-address --items "$(mk O1 s1.js MUST-ADDRESS correctness o false t6)" >/dev/null 2>&1
+echo 3 >> s2.js; G commit -qam t6b
+run --out .review-reports/t6b
+rec13 .review-reports/t6b --verdict must-address && ok "引き継ぎだけでも must-address で記録できる（T6）" || ng "T6: $(cat "$T/rg.out")"
+rec13 .review-reports/t6b --verdict must-address && case " $(ids) " in *" carry-O1:open "*) ok "同じ差分レビューの run を記録し直せ、引き継ぎも残る（T7）" ;; *) ng "T7 の引き継ぎ: $(ids)" ;; esac || ng "T7: $(cat "$T/rg.out")"
+rm -rf .ai-review
+# T8: 混み合いの判定は pipefail の下でも正しく真になる
+grep -q "grep -qE '^(ERROR|error)" "$RR" && ng "tail | grep -q のまま（T8）" || ok "混み合いの判定で grep -q をパイプの後ろに置かない（T8）"
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap

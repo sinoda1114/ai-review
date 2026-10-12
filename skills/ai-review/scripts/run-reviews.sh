@@ -349,7 +349,9 @@ if [ "$mode" = "local" ]; then
 elif [ -n "$base" ]; then
   git -C "$repo_top" diff --numstat --no-renames --diff-filter=d -z "$base...$reviewed_sha" 2>/dev/null | list_numstat >> "$changed"
   # 削除・名前変更の旧パスも含む一覧（record が差分レビューの fixed の照合に使う）
-  git -C "$repo_top" diff --name-only --no-renames "$base...$reviewed_sha" 2>/dev/null > "$out/changed-files-all.txt"
+  # 日本語などのパスを引用形式（"\346..."）にしないよう core.quotePath=false で取る
+  git -C "$repo_top" -c core.quotePath=false diff --name-only --no-renames -z "$base...$reviewed_sha" 2>/dev/null |
+    tr '\0' '\n' > "$out/changed-files-all.txt"
 fi
 echo "changed_files=$(wc -l < "$changed" | tr -d ' ')" >> "$status"
 # リポジトリ単位の core.hooksPath はグローバルより優先されるので、グローバルに入れた pre-push ゲートが動かない
@@ -710,7 +712,8 @@ for n in $names; do
   is_failed "$n" || continue
   is_timed_out "$n" && continue  # タイムアウトは混み合いの回し直しの対象にしない（通っても TIMEOUT として捨てられる）
   # Codex のエラー行の形だけを見る（別の失敗の出力に「at capacity」という語が混ざっても待たない）
-  tail -n 20 "$out/$n.err" 2>/dev/null | grep -qE '^(ERROR|error)[: ].*Selected model is at capacity' || continue
+  # grep -q は一致した時点で抜け、pipefail の下では tail の SIGPIPE で偽になりうるので、全部を読ませる
+  tail -n 20 "$out/$n.err" 2>/dev/null | grep -E '^(ERROR|error)[: ].*Selected model is at capacity' >/dev/null || continue
   sleep "${AI_REVIEW_CAPACITY_WAIT:-60}"
   failed="$(printf ' %s ' "$failed" | sed "s/ $n / /g")"
   rerun_one "$n" "Codex の混み合い: 待ってから単独で再実行"; rc=$?

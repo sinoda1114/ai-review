@@ -517,6 +517,15 @@ def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
     )
 
 
+def heavy_fixed(prev):
+    """前回の記録で fixed にしたが、まだ再レビューしていない項目のうち、差分レビューでは確かめきれないもの:
+    重い項目（BLOCK・高リスク・セキュリティ）と、差分に入らず open に戻したことがある項目（reopened）"""
+    return [it for it in prev.get("must_address") or []
+            if isinstance(it, dict) and it.get("status") == "fixed" and not it.get("re_reviewed_sha")
+            and (it.get("tier") == "BLOCK" or it.get("high_risk") is True or it.get("category") == "security"
+                 or it.get("reopened") is True)]
+
+
 def cmd_plan(a):
     prev = read_json(a.latest)
     # 祖先の確認はシェルが sed で読んだ値で行っているので、JSON の値と同じときだけつなぐ
@@ -533,11 +542,13 @@ def cmd_plan(a):
         out["why"] = "差分が小さい（max_files / max_added 以下）ので毎回全体を見る"
     elif prev.get("head_sha") == a.head:
         out["why"] = "前回と同じ HEAD"
-    elif any(isinstance(it, dict) and it.get("status") == "fixed" and not it.get("re_reviewed_sha")
-             and (it.get("tier") == "BLOCK" or it.get("high_risk") is True or it.get("category") == "security")
-             for it in prev.get("must_address") or []):
-        # 差分レビューは「そのファイルが差分にあるか」までしか確かめられない。重い項目の fixed は全体で確かめる
-        out["why"] = "BLOCK・高リスク・セキュリティの項目を fixed にしたので、全体で確かめる"
+    elif heavy_fixed(prev):
+        # 差分レビューは「そのファイルが差分にあるか」までしか確かめられない。重い項目と、一度 open に戻した項目の
+        # fixed は全体で確かめる（戻した項目は、差分レビューを続ける限り確かめられない）
+        out["why"] = "BLOCK・高リスク・セキュリティ、または差分に入らなかった項目を fixed にしたので、全体で確かめる"
+    elif large and prev.get("chain_size_escalated") is not True:
+        # 規模による深掘りがまだのブランチは、深掘りが全体を見るように、この周を全体にする
+        out["why"] = "ブランチ全体が規模の上限を超えたが、まだ規模による深掘りをしていないので、全体を深掘りする"
     elif prev.get("scope") == "incremental" and clean and prev["full_count"] < FULL_REVIEWS_BEFORE_PUSH:
         out["why"] = "差分レビューが片づいたので、最後に全体を見る"
     else:
@@ -549,7 +560,7 @@ def cmd_plan(a):
     out["force_reason"] = "chain" if out["force_escalation"] else ""
     # 差分レビューの周は規模の判定を飛ばす（no_size）。ただし、今のブランチ全体が上限を超えているのに、
     # これまでの周で規模による深掘りを一度もしていなければ、深掘りを求める（1 周目が小さかったブランチ）
-    if chained and large and prev.get("chain_size_escalated") is not True:
+    if chained and large and prev.get("chain_size_escalated") is not True and out["scope"] == "full":
         out["force_escalation"] = True
         out["force_reason"] = "size"
     print(json.dumps(out, ensure_ascii=False))
@@ -577,6 +588,10 @@ def cmd_record(a):
     if a.run and not a.no_diff and a.escalate != "true" and any(it["category"] == "security" for it in items):
         die("セキュリティの指摘（category=security）があります。own-security を回し、--escalate true で記録してください")
     prev = read_json(a.previous) if a.previous else {}
+    if (a.run and isinstance(prev.get("_previous"), dict) and prev.get("head_sha") == a.head
+            and prev.get("scope") == "incremental" and prev.get("since_sha") == (read_json(os.path.join(a.run, "scope.json")) or {}).get("since")):
+        # 同じ差分レビューの run を記録し直す。前回の記録は今回の結果なので、その前の記録をつなぎ先にする
+        prev = prev["_previous"]
     is_dry = bool(a.run) and os.path.exists(os.path.join(a.run, "dry-run.flag"))
     chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", is_dry)
     scope = {"scope": "full"}
@@ -594,6 +609,10 @@ def cmd_record(a):
                 size_skipped = json.load(f).get("size_skipped") is True
         except (OSError, ValueError, AttributeError):
             size_skipped = False
+        if scope["scope"] == "incremental" and heavy_fixed(prev):
+            die("前回の記録に、差分レビューでは確かめきれない fixed（%s）があります。"
+                "run-reviews.sh --full で全体をレビューしてから記録してください"
+                % ", ".join(str(it.get("id")) for it in heavy_fixed(prev))[:200])
         if size_skipped and not chained:
             die("規模による昇格を飛ばした run ですが、前回の記録とつながりません（規模の判定は 1 周目に要る）")
         if (scope["scope"] == "full" and chained and prev.get("chain_escalated") is True
@@ -647,8 +666,6 @@ def cmd_record(a):
 
     level = max([LEVEL[given], LEVEL[floor]] + [TIER_LEVEL[it["tier"]] for it in items])
     verdict = [k for k, v in LEVEL.items() if v == level][0]
-    if verdict == "must-address" and not items:
-        die("結論が must-address ですが項目がありません")
     if LEVEL[verdict] > LEVEL[given]:
         print("[ai-review] 結論を %s → %s に引き上げました（生出力・項目から機械的に決まる下限）"
               % (given, verdict), file=sys.stderr)
@@ -689,6 +706,7 @@ def cmd_record(a):
                 c["id"] = carry_id(it.get("id"))
                 c["carried_from"] = prev.get("head_sha")
                 c["note"] = "fixed だったが、差分レビューの差分にこのファイルが無いので確かめられていない"
+                c["reopened"] = True  # また fixed にしたら、次の周は全体で確かめる（heavy_fixed）
                 carried.append(c)
             elif it.get("status") == "fixed" and not it.get("re_reviewed_sha"):
                 c = dict(it)
@@ -709,9 +727,18 @@ def cmd_record(a):
                     c.pop("approved_by", None)
                     c.pop("approval_note", None)
                 carried.append(c)
+    # 引き継いだ項目にも、今の高リスクの決まりを当てる（後から足した path ルールを含む）
+    for c in carried:
+        hr, why = high_risk_of(c, pats)
+        if hr and c.get("high_risk") is not True:
+            c["high_risk"] = True
+            c["high_risk_reason"] = why
+            c.pop("approved_by", None)
     if carried:
         level = max([level] + [TIER_LEVEL.get(it.get("tier"), 1) for it in carried])
         verdict = [k for k, v in LEVEL.items() if v == level][0]
+    if verdict == "must-address" and not items and not carried:
+        die("結論が must-address ですが項目がありません")
 
     rec = {
         "version": 3,
@@ -748,7 +775,7 @@ def cmd_record(a):
         full_deep = rec["scope"] == "full" and a.escalation_done == "true"
         dry_esc = isinstance(esc, dict) and esc.get("dry_run") is True
         rec["chain_size_escalated"] = bool((prev.get("chain_size_escalated") is True and chained)
-                                           or (size_esc and a.escalation_done == "true") or full_deep or dry_esc)
+                                           or (size_esc and a.escalation_done == "true" and rec["scope"] == "full") or full_deep or dry_esc)
         rec["chain_escalated"] = (prev.get("chain_escalated") is True) if chained else (a.escalate == "true")
         if rec["scope"] == "incremental":
             rec["since_sha"] = scope.get("since")
@@ -758,6 +785,9 @@ def cmd_record(a):
         # ダミー実行（AI_REVIEW_DRY_RUN=1）の結果。pre-push は AI_REVIEW_ALLOW_DRY=1 が無ければ拒む
         rec["dry_run"] = True
         print("[ai-review] 注意: ダミー実行の結果です。push の根拠になりません", file=sys.stderr)
+    if rec.get("scope") == "incremental" and prev:
+        # 同じ run を記録し直すときのつなぎ先（1 段だけ持つ。pre-push は先頭の値を読むので最後に置く）
+        rec["_previous"] = {k: v for k, v in prev.items() if k != "_previous"}
     print(json.dumps(rec, ensure_ascii=False, indent=2))
     if rec["deep_recommended"]:
         print(safe("[ai-review] --deep を推奨: " + " / ".join(rec["deep_recommend_reasons"])), file=sys.stderr)
