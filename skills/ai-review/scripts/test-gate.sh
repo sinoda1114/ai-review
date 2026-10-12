@@ -570,6 +570,63 @@ sd="$here/.."
 grep -qi 'jev' "$sd/SKILL.md" "$sd/scripts/run-reviews.sh" "$sd/scripts/record-gate.sh" "$sd/hooks/pre-push" && ng "JEV の記述が残っている" || ok "SKILL.md・スクリプトに JEV の記述なし"
 grep -q 'commands/code-review.md\|ECC' "$sd/SKILL.md" "$sd/scripts/run-reviews.sh" && ng "ECC への依存が残っている" || ok "ECC（~/.claude/commands/code-review.md）に依存しない"
 
+echo "13d. 差分レビューの穴（2026-10-12 の /ai-review の指摘 R1〜R5）"
+mkdir -p .ai-review
+# R1: 同じ HEAD で回し直しても、全体レビューの回数は増やさない
+G checkout -q -b fc1 origin/main
+printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+echo 1 > d1.js; echo 2 > d2.js; G add d1.js d2.js; G commit -qm big
+for r in d1 d2; do  # 大きいブランチの 1 周目（規模で深掘り）と、同じ HEAD での回し直し
+  AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/$r; run --out .review-reports/$r --security
+  bash "$RG" --verdict pass --escalate true --escalation-done true --report .review-reports/$r/report.md >"$T/rg.out" 2>&1 || ng "$r の記録: $(cat "$T/rg.out")"
+done
+[ "$(jget full_count)" = "1" ] && ok "同じ HEAD の回し直しでは full_count を増やさない（R1）" || ng "full_count=$(jget full_count)"
+echo 3 >> d1.js; G commit -qam fix1
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/d3
+[ "$(sget .review-reports/d3/scope.json scope)" = "incremental" ] && ok "次の周は差分レビュー" || ng "d3: $(cat .review-reports/d3/scope.json)"
+rec13 .review-reports/d3 --verdict pass >/dev/null 2>&1
+hook >/dev/null 2>&1 && ng "最後の全体レビューを経ずに push を通した（R1）" || ok "最後の全体レビューを経ていなければ push を止める（R1）"
+# R2: 差分レビューでも、秘密情報の判定はブランチ全体で行う
+G checkout -q -b sec1 origin/main
+echo 1 > e1.js; echo 2 > e2.js; echo 'K=1' > .env; G add -f e1.js e2.js .env; G commit -qm withenv
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/s1
+bash "$RG" --verdict pass --escalate true --escalation-done false --report .review-reports/s1/report.md >/dev/null 2>&1
+echo 3 >> e1.js; G commit -qam e
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/s2
+[ "$(sget .review-reports/s2/scope.json scope)" = "incremental" ] || ng "s2 が差分レビューにならない: $(cat .review-reports/s2/scope.json)"
+grep -q '\.env' .review-reports/s2/escalation.json && ok "差分の外の .env も secret_paths に残す（R2）" || ng "s2: $(cat .review-reports/s2/escalation.json)"
+grep -q 'UNAVAILABLE codex-review' .review-reports/s2/status.txt && ok "その場合は Codex を起動しない（R2）" || ng "s2 status: $(grep -i codex .review-reports/s2/status.txt)"
+# R3: 1 周目が小さく、後で上限を超えたブランチは、規模による深掘りを求める
+G checkout -q -b sz1 origin/main
+rm -f .ai-review/escalation-rules.local.txt
+echo 1 > z1.js; G add z1.js; G commit -qm small
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/z1; rec13 .review-reports/z1 --verdict pass >"$T/rg.out" 2>&1 || ng "z1 の記録: $(cat "$T/rg.out")"
+printf 'max_files 2\n' > .ai-review/escalation-rules.local.txt
+echo 2 > z2.js; echo 3 > z3.js; G add z2.js z3.js; G commit -qm grow
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/z2
+grep -q 'F:size' .review-reports/z2/escalation.json && grep -q '"escalate": *true' .review-reports/z2/escalation.json && ok "後で大きくなったブランチは規模で深掘りを求める（R3）" || ng "z2: $(cat .review-reports/z2/escalation.json) / $(cat .review-reports/z2/scope.json)"
+# R5: 差分レビューでは、差分に入っていないファイルの fixed は再レビュー済みにしない
+G checkout -q -b fx1 origin/main
+printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+echo 1 > f1.js; echo 2 > f2.js; G add f1.js f2.js; G commit -qm big
+run --out .review-reports/x1
+echo '[{"id":"R1","source":"own-review","file":"f1.js","line":1,"tier":"MUST-ADDRESS","severity":"Medium","category":"correctness","summary":"f1 の不具合","high_risk":false}]' > "$T/x1-items.json"
+rec13 .review-reports/x1 --verdict must-address --items "$T/x1-items.json" >/dev/null 2>&1
+bash "$RI" --id R1 --fixed --note "直した（嘘）" >/dev/null 2>&1
+echo 3 >> f2.js; G commit -qam unrelated
+run --out .review-reports/x2; rec13 .review-reports/x2 --verdict pass >/dev/null 2>&1
+python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); s={i["id"]: i["status"] for i in d["must_address"]}; sys.exit(0 if s.get("carry-R1") == "open" and "prev-R1" not in s else 1)' && ok "差分に入っていないファイルの fixed は open のまま引き継ぐ（R5）" || ng "x2: $(python3 -c 'import json; print([(i["id"], i["status"]) for i in json.load(open(".review-reports/latest.json"))["must_address"]])')"
+G checkout -q -b fx2 origin/main
+echo 1 > g1.js; echo 2 > g2.js; G add g1.js g2.js; G commit -qm big
+run --out .review-reports/y1
+sed 's/f1/g1/g' "$T/x1-items.json" > "$T/y1-items.json"
+rec13 .review-reports/y1 --verdict must-address --items "$T/y1-items.json" >/dev/null 2>&1
+bash "$RI" --id R1 --fixed --note "直した" >/dev/null 2>&1
+echo 3 >> g1.js; G commit -qam fixg1
+run --out .review-reports/y2; rec13 .review-reports/y2 --verdict pass >/dev/null 2>&1
+python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); s={i["id"]: i["status"] for i in d["must_address"]}; sys.exit(0 if s.get("prev-R1") == "fixed" else 1)' && ok "差分に入ったファイルの fixed は再レビュー済みにする（R5）" || ng "y2: $(python3 -c 'import json; print([(i["id"], i["status"]) for i in json.load(open(".review-reports/latest.json"))["must_address"]])')"
+rm -rf .ai-review
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap

@@ -508,14 +508,16 @@ def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
         and prev.get("chain_base")
         and prev.get("chain_base") == merge_base
         and isinstance(prev.get("full_count"), int) and prev["full_count"] >= 1
-        and prev.get("head_sha")
+        and isinstance(prev.get("head_sha"), str)
+        and bool(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", prev["head_sha"]))
         and prev_ancestor
     )
 
 
 def cmd_plan(a):
     prev = read_json(a.latest)
-    chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", a.dry)
+    # 祖先の確認はシェルが sed で読んだ値で行っているので、JSON の値と同じときだけつなぐ
+    chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true" and prev.get("head_sha") == a.prev_head, a.dry)
     lim = size_limits(a.rules)
     large = a.files > lim.get("max_files", 10 ** 9) or a.added > lim.get("max_added", 10 ** 9)
     clean = chained and not unresolved(prev, prev.get("head_sha")) and prev.get("verdict") in ("pass", "must-address")
@@ -536,12 +538,19 @@ def cmd_plan(a):
     # 1 周目で深掘りが加わったブランチは、2 回目以降の全体レビュー（最後の全体）でも深掘りを加える。
     # 差分レビューの周は、その周の差分の昇格判定に任せる
     out["force_escalation"] = bool(chained and out["scope"] == "full" and prev.get("chain_escalated") is True)
+    out["force_reason"] = "chain" if out["force_escalation"] else ""
+    # 差分レビューの周は規模の判定を飛ばす（no_size）。ただし、今のブランチ全体が上限を超えているのに、
+    # これまでの周で規模による深掘りを一度もしていなければ、深掘りを求める（1 周目が小さかったブランチ）
+    if chained and large and prev.get("chain_size_escalated") is not True:
+        out["force_escalation"] = True
+        out["force_reason"] = "size"
     print(json.dumps(out, ensure_ascii=False))
 
 
 def cmd_record(a):
     items = load_items(a.items)
     s = summarize(a.run) if a.run else None
+    esc = None
     # 昇格はスクリプトの判定（escalation.json）を下限にする。エージェントの --escalate false で打ち消させない
     if a.run and not a.no_diff:
         try:
@@ -640,11 +649,28 @@ def cmd_record(a):
     prev_fixed = []
     carried = []
     incremental = scope.get("scope") == "incremental"
+    changed = set()
+    if incremental and a.run:
+        try:
+            with open(os.path.join(a.run, "changed-files.txt"), encoding="utf-8") as f:
+                changed = {ln.strip() for ln in f if ln.strip()}
+        except OSError:
+            changed = set()
     if prev.get("branch") == a.branch and prev.get("head_sha") and prev.get("head_sha") != a.head:
         for it in prev.get("must_address") or []:
             if not isinstance(it, dict):
                 continue
-            if it.get("status") == "fixed" and not it.get("re_reviewed_sha"):
+            if (it.get("status") == "fixed" and not it.get("re_reviewed_sha") and incremental
+                    and it.get("file") not in changed):
+                # 差分レビューは差分の中しか見ないので、差分にそのファイルが無い fixed は確かめられていない。
+                # 再レビュー済みにせず、open に戻して引き継ぐ（偽の fixed で BLOCK・高リスクを抜けさせない）
+                c = dict(it, status="open")
+                iid = str(it.get("id"))
+                c["id"] = iid if iid.startswith("carry-") else "carry-" + iid
+                c["carried_from"] = prev.get("head_sha")
+                c["note"] = "fixed だったが、差分レビューの差分にこのファイルが無いので確かめられていない"
+                carried.append(c)
+            elif it.get("status") == "fixed" and not it.get("re_reviewed_sha"):
                 c = dict(it)
                 c["id"] = "prev-" + str(it.get("id"))
                 c["re_reviewed_sha"] = a.head
@@ -657,6 +683,11 @@ def cmd_record(a):
                 iid = str(it.get("id"))
                 c["id"] = iid if iid.startswith("carry-") else "carry-" + iid
                 c["carried_from"] = prev.get("head_sha")
+                if c.get("status") == "accepted" and c.get("file") in changed:
+                    # 理由の前提のコードが差分で変わったので、検証と人の承認をやり直す
+                    c["verifier"] = "pending"
+                    c.pop("approved_by", None)
+                    c.pop("approval_note", None)
                 carried.append(c)
     if carried:
         level = max([level] + [TIER_LEVEL.get(it.get("tier"), 1) for it in carried])
@@ -686,7 +717,18 @@ def cmd_record(a):
         rec["scope"] = scope.get("scope", "full")
         rec["chain_base"] = a.merge_base
         base_count = prev["full_count"] if chained else 0
-        rec["full_count"] = base_count + (1 if rec["scope"] == "full" else 0)
+        # 数えるのは「1 周目の全体」と「差分の周の後の全体」だけ。同じ HEAD や全体どうしの回し直しでは増やさない
+        # （増やすと、最後の全体レビューを経ずに pre-push の full_count >= 2 を満たせる）
+        counts = rec["scope"] == "full" and (not chained or prev.get("scope") == "incremental")
+        rec["full_count"] = base_count + (1 if counts else 0)
+        # 規模による深掘りが済んだか: 規模の昇格（C:・F:size）で深掘りした、または全体レビューで深掘りした
+        # （ブランチ全体を深掘りしたので、規模の懸念も見ている）。ダミー実行の判定は規模を見ないので済んだ扱いにする
+        # （実際の判定は AI_REVIEW_DRY_ESCALATION=real で試す）
+        size_esc = isinstance(esc, dict) and any(str(r).startswith(("C:", "F:size")) for r in esc.get("reasons") or [])
+        full_deep = rec["scope"] == "full" and a.escalation_done == "true"
+        dry_esc = isinstance(esc, dict) and esc.get("dry_run") is True
+        rec["chain_size_escalated"] = bool((prev.get("chain_size_escalated") is True and chained)
+                                           or (size_esc and a.escalation_done == "true") or full_deep or dry_esc)
         rec["chain_escalated"] = (prev.get("chain_escalated") is True) if chained else (a.escalate == "true")
         if rec["scope"] == "incremental":
             rec["since_sha"] = scope.get("since")
@@ -888,6 +930,7 @@ def main():
     pl.add_argument("--branch", required=True)
     pl.add_argument("--merge-base", required=True)
     pl.add_argument("--prev-ancestor", default="false")
+    pl.add_argument("--prev-head", default="")
     pl.add_argument("--files", type=int, required=True)
     pl.add_argument("--added", type=int, required=True)
     pl.add_argument("--rules", action="append")

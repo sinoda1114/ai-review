@@ -167,7 +167,7 @@ if [ "$mode" != "local" ] && [ $base_given -eq 0 ] && [ -n "$base" ]; then
     read -r plan_files plan_added < <(git diff --numstat "${plan_mb:-HEAD}" HEAD 2>/dev/null |
       awk '{n++} $1 ~ /^[0-9]+$/ {s+=$1} END {print n+0, s+0}')
     plan_args=(plan --latest "$plan_top/.review-reports/latest.json" --head "$(git rev-parse HEAD)"
-      --branch "$(git rev-parse --abbrev-ref HEAD)" --merge-base "$plan_mb" --prev-ancestor "$prev_anc"
+      --branch "$(git rev-parse --abbrev-ref HEAD)" --merge-base "$plan_mb" --prev-ancestor "$prev_anc" --prev-head "$prev_head"
       --files "${plan_files:-0}" --added "${plan_added:-0}"
       --rules "$script_dir/../escalation-rules.txt" --rules "$plan_top/.ai-review/escalation-rules.local.txt")
     [ $force_full -eq 1 ] && plan_args+=(--full)
@@ -184,6 +184,7 @@ if [ "$mode" != "local" ] && [ $base_given -eq 0 ] && [ -n "$base" ]; then
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 print((d.get("since") or "-") if d.get("scope") == "incremental" else "-", 1 if d.get("no_size") else 0)' "$out/scope.json" 2>/dev/null)
     [ "$since" = "-" ] && since=""
+    full_base="$base"
     [ -n "$since" ] && base="$since"
     echo "scope=$([ -n "$since" ] && echo "incremental since=$since" || echo full) no_size=${no_size:-0}" >> "$status"
   fi
@@ -372,6 +373,22 @@ if [ $security -eq 0 ] || [ ! -s "$out/escalation.json" ]; then
     fi
   fi
 fi
+# 差分レビューでも、秘密情報の判定はブランチ全体（merge-base から）で行う。差分の外（前の周）で入った .env などを
+# 見落とすと、そのファイルがある作業場所で Codex を起動してしまう（Codex は差分の外のファイルも読める）
+if [ -n "${since:-}" ] && [ -n "${full_base:-}" ] && [ -s "$out/escalation.json" ] && [ "${AI_REVIEW_DRY_RUN:-0}" != "1" -o "${AI_REVIEW_DRY_ESCALATION:-}" = "real" ]; then
+  if ( cd "$repo_top" && "$script_dir/escalation-check.sh" --base "$full_base" --no-size ) > "$out/escalation-full.json" 2>> "$status"; then
+    "$py" -I -c 'import json,sys
+d = json.load(open(sys.argv[1], encoding="utf-8")); f = json.load(open(sys.argv[2], encoding="utf-8"))
+sp = list(dict.fromkeys((d.get("secret_paths") or []) + (f.get("secret_paths") or [])))
+d["secret_paths"] = sp
+json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False)' "$out/escalation.json" "$out/escalation-full.json" 2>> "$status" ||
+      { echo "WARN: ブランチ全体の秘密情報の判定を足せなかった（Codex を起動しない）" >> "$status"
+        "$py" -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["secret_paths"]="?"; json.dump(d, open(p,"w"))' "$out/escalation.json"; }
+  else
+    echo "WARN: ブランチ全体の秘密情報の判定が失敗した（Codex を起動しない）" >> "$status"
+    "$py" -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["secret_paths"]="?"; json.dump(d, open(p,"w"))' "$out/escalation.json"
+  fi
+fi
 # 1 周目で深掘りが加わったブランチの最後の全体レビュー（scope.json の force_escalation）は、深掘りを必ず加える
 if [ $security -eq 0 ] && [ -s "$out/escalation.json" ] && [ -s "$out/scope.json" ]; then
   "$py" -I -c 'import json,sys
@@ -379,7 +396,8 @@ sc = json.load(open(sys.argv[1], encoding="utf-8"))
 if sc.get("force_escalation") is True:
     p = sys.argv[2]; d = json.load(open(p, encoding="utf-8"))
     d["escalate"] = True
-    d["reasons"] = (d.get("reasons") or []) + ["F:chain:1 周目で深掘りが加わったブランチの最後の全体レビュー"]
+    why = {"size": "F:size:ブランチ全体が規模の上限を超えたが、まだ規模による深掘りをしていない"}
+    d["reasons"] = (d.get("reasons") or []) + [why.get(sc.get("force_reason"), "F:chain:1 周目で深掘りが加わったブランチの最後の全体レビュー")]
     json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)' "$out/scope.json" "$out/escalation.json" 2>> "$status" ||
     echo "WARN: 最後の全体レビューの深掘りを escalation.json に書けなかった" >> "$status"
 fi
@@ -686,6 +704,7 @@ done
 for n in $names; do
   case "$n" in codex-*) ;; *) continue ;; esac
   is_failed "$n" || continue
+  is_timed_out "$n" && continue  # タイムアウトは混み合いの回し直しの対象にしない（通っても TIMEOUT として捨てられる）
   grep -q 'at capacity' "$out/$n.err" 2>/dev/null || continue
   sleep "${AI_REVIEW_CAPACITY_WAIT:-60}"
   failed="$(printf ' %s ' "$failed" | sed "s/ $n / /g")"
