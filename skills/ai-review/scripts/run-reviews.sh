@@ -10,6 +10,13 @@
 #     --security     通常の 2 本の代わりに own-security（セキュリティの深掘り）だけを起動する（昇格用）
 #     --deep         強化版。通常の 2 本に加えて own-security・own-review（Fable 5.1）・Codex（Astra）を並列で起動する
 #     --timeout      各コマンドの上限秒（既定 900）
+#     --full         差分レビューにせず、必ず全体（origin/HEAD...HEAD）をレビューする
+#
+# 範囲の自動選択（branch モード。DESIGN-v3.md §8）: 差分が大きい（escalation-rules の max_files /
+# max_added を超える）ブランチでは、前回の記録（.review-reports/latest.json）とつながる 2 周目以降、
+# 前回レビューした SHA から HEAD までの差分だけをレビューする。差分レビューが片づいたら最後に 1 回
+# 全体を見る。2 周目以降は規模による昇格をしない。決めた範囲は <out>/scope.json に残し、--security は
+# 同じ run の scope.json に従う。
 #
 # レビュアー（出力ファイル名 = 名前。DESIGN-v3.md §3）:
 #   own-review        prompts/own-review.md   × claude-opus-5-5 / high   （毎回）
@@ -59,11 +66,12 @@ script_dir="$here"  # 同梱スクリプトの場所（here は後で別の用�
 prompt_dir="$here/../prompts"
 gate_py="$here/gate.py"
 
-out=""; base=""; mode="branch"; use_codex=1; codex_off=""; security=0; deep=0; timeout_sec=900
+out=""; base=""; base_given=0; mode="branch"; use_codex=1; codex_off=""; security=0; deep=0; timeout_sec=900; force_full=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) out="$2"; shift 2 ;;
-    --base) base="$2"; shift 2 ;;
+    --base) base="$2"; base_given=1; shift 2 ;;
+    --full) force_full=1; shift ;;
     --local) mode="local"; shift ;;
     --no-codex) use_codex=0; shift ;;
     --security) security=1; shift ;;
@@ -140,6 +148,43 @@ resolve_base() {
   echo ""
 }
 [ -n "$base" ] || base="$(resolve_base)"
+
+# ---- 範囲の選択（全体 / 前回レビューした SHA からの差分）----
+since=""; no_size=0
+if [ "$mode" != "local" ] && [ $base_given -eq 0 ] && [ -n "$base" ]; then
+  plan_top="$(git rev-parse --show-toplevel)"
+  if [ $security -eq 1 ] && [ -s "$out/scope.json" ]; then
+    : # 同じ run の通常のレビューが決めた範囲に従う
+  elif [ $security -eq 0 ]; then
+    plan_mb="$(git merge-base "$base" HEAD 2>/dev/null || true)"
+    prev_head="$(sed -n 's/.*"head_sha": *"\([0-9a-f]*\)".*/\1/p' "$plan_top/.review-reports/latest.json" 2>/dev/null | head -1)"
+    prev_anc=false
+    [ -n "$prev_head" ] && git merge-base --is-ancestor "$prev_head" HEAD 2>/dev/null && prev_anc=true
+    read -r plan_files plan_added < <(git diff --numstat "${plan_mb:-HEAD}" HEAD 2>/dev/null |
+      awk '{n++} $1 ~ /^[0-9]+$/ {s+=$1} END {print n+0, s+0}')
+    plan_args=(plan --latest "$plan_top/.review-reports/latest.json" --head "$(git rev-parse HEAD)"
+      --branch "$(git rev-parse --abbrev-ref HEAD)" --merge-base "$plan_mb" --prev-ancestor "$prev_anc"
+      --files "${plan_files:-0}" --added "${plan_added:-0}"
+      --rules "$script_dir/../escalation-rules.txt" --rules "$plan_top/.ai-review/escalation-rules.local.txt")
+    [ $force_full -eq 1 ] && plan_args+=(--full)
+    [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && plan_args+=(--dry)
+    if [ -n "$plan_mb" ] && "$py" -I "$gate_py" "${plan_args[@]}" > "$out/scope.json.tmp" 2>> "$status"; then
+      mv "$out/scope.json.tmp" "$out/scope.json"
+    else
+      rm -f "$out/scope.json.tmp"; echo '{"scope": "full", "since": "", "no_size": false, "why": "範囲を決められなかった"}' > "$out/scope.json"
+    fi
+  fi
+  if [ -s "$out/scope.json" ]; then
+    read -r since no_size < <("$py" -I -c 'import json,sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+print((d.get("since") or "-") if d.get("scope") == "incremental" else "-", 1 if d.get("no_size") else 0)' "$out/scope.json" 2>/dev/null)
+    [ "$since" = "-" ] && since=""
+    [ -n "$since" ] && base="$since"
+    echo "scope=$([ -n "$since" ] && echo "incremental since=$since" || echo full) no_size=${no_size:-0}" >> "$status"
+  fi
+elif [ $security -eq 0 ]; then
+  rm -f "$out/scope.json"
+fi
 
 # ---- 作業ツリーの隔離（branch / security モード）----
 # ブランチモードと昇格の対象はコミット済みの差分（base...HEAD）。ところが作業ツリーに
@@ -312,6 +357,7 @@ if [ $security -eq 0 ] || [ ! -s "$out/escalation.json" ]; then
     echo '{"escalate": false, "reasons": [], "secret_paths": [], "dry_run": true}' > "$out/escalation.json"
   else
     esc_args=(); [ "$mode" = "local" ] && esc_args+=(--local); [ "$mode" != "local" ] && [ -n "$base" ] && esc_args+=(--base "$base")
+    [ "${no_size:-0}" = "1" ] && esc_args+=(--no-size)
     # 一時ファイルに書き、成功したときだけ置く（失敗で空のファイルを残さない）
     if ( cd "$repo_top" && "$script_dir/escalation-check.sh" ${esc_args[@]+"${esc_args[@]}"} ) > "$out/escalation.json.tmp" 2>> "$status"; then
       mv "$out/escalation.json.tmp" "$out/escalation.json"
@@ -344,6 +390,7 @@ if [ "$mode" = "local" ]; then
   target_line="対象: 未コミットの変更（ステージ済み・未ステージ・未追跡）"
 else
   target_line="比較範囲: ${base:-origin/HEAD}...HEAD の差分"
+  [ -n "$since" ] && target_line="比較範囲: ${since}...HEAD の差分（${since:0:7} までの変更はレビュー済み。それ以降に追加されたコミットを見る）"
 fi
 render_prompt() {
   TARGET_LINE="$target_line" awk '

@@ -101,6 +101,17 @@ if [ "$mode" != "branch" ]; then
   exit 1
 fi
 
+# 差分レビュー（前回レビューした SHA からの差分だけを見た記録）は、全体のレビューを最初と最後の 2 回
+# 経ていなければ通さない（差分レビューは、触っていないコードとの組み合わせを見直さない。DESIGN-v3.md §8）
+scope="$(get scope)"; full_count="$(get full_count)"
+if [ "$scope" = "incremental" ]; then
+  case "$full_count" in ''|*[!0-9]*) full_count=0 ;; esac
+  if [ "$full_count" -lt 2 ]; then
+    echo "[ai-review] 拒否: 直近の記録は差分レビューです。push の前に最後の全体レビューが要ります。/ai-review を再実行してください（自動で全体を見ます）" >&2
+    exit 1
+  fi
+fi
+
 # push する各 ref の sha を、レビュー済み SHA と突き合わせる
 for sha in $push_shas; do
   if [ "$sha" != "$head_sha" ]; then

@@ -431,8 +431,8 @@ def load_items(path):
         iid = str(it.get("id") or "").strip()
         if not iid or iid in seen:
             die("--items[%d] の id が空か重複しています（%r）" % (i, iid))
-        if iid.startswith(("auto-", "prev-")):
-            die("--items[%d] の id %r は予約されています（auto- / prev- は記録時に自動で付く）" % (i, iid))
+        if iid.startswith(("auto-", "prev-", "carry-")):
+            die("--items[%d] の id %r は予約されています（auto- / prev- / carry- は記録時に自動で付く）" % (i, iid))
         seen.add(iid)
         tier = it.get("tier")
         if tier not in TIER_LEVEL:
@@ -465,6 +465,77 @@ def load_items(path):
     return out
 
 
+# ---------------------------------------------------------------- 差分レビュー（DESIGN-v3.md §8）
+# 大きいブランチでは、2 周目以降は前回レビューした SHA からの差分だけをレビューする。
+# 1 周目（全体）から差分レビューが途切れずにつながっていること（チェーン）を記録で確かめ、
+# push の前には全体のレビューを 2 回（最初と最後）経ていることを求める。
+
+FULL_REVIEWS_BEFORE_PUSH = 2
+
+
+def size_limits(rule_files):
+    """escalation-rules の max_files / max_added（後のファイルが前を上書きする）"""
+    lim = {}
+    for rf in rule_files or []:
+        try:
+            with open(rf, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] in ("max_files", "max_added") and parts[1].isdigit():
+                lim[parts[0]] = int(parts[1])
+    return lim
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
+    """前回の記録が、今回のレビューと同じチェーン（同じブランチ・同じ起点・HEAD の祖先）にあるか"""
+    return bool(
+        prev.get("mode") == "branch"
+        # ダミー実行の記録は、ダミー実行どうしでしかつなげない（実モデルのチェーンに混ぜない）
+        and bool(prev.get("dry_run")) == dry
+        and prev.get("branch") == branch
+        and prev.get("chain_base")
+        and prev.get("chain_base") == merge_base
+        and isinstance(prev.get("full_count"), int) and prev["full_count"] >= 1
+        and prev.get("head_sha")
+        and prev_ancestor
+    )
+
+
+def cmd_plan(a):
+    prev = read_json(a.latest)
+    chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", a.dry)
+    lim = size_limits(a.rules)
+    large = a.files > lim.get("max_files", 10 ** 9) or a.added > lim.get("max_added", 10 ** 9)
+    clean = chained and not unresolved(prev, prev.get("head_sha")) and prev.get("verdict") in ("pass", "must-address")
+    out = {"scope": "full", "since": "", "no_size": chained, "merge_base": a.merge_base}
+    if a.full:
+        out["why"] = "--full の指定"
+    elif not chained:
+        out["why"] = "前回の記録とつながらない（1 周目・別のブランチ・起点が変わった）"
+    elif not large:
+        out["why"] = "差分が小さい（max_files / max_added 以下）ので毎回全体を見る"
+    elif prev.get("head_sha") == a.head:
+        out["why"] = "前回と同じ HEAD"
+    elif prev.get("scope") == "incremental" and clean and prev["full_count"] < FULL_REVIEWS_BEFORE_PUSH:
+        out["why"] = "差分レビューが片づいたので、最後に全体を見る"
+    else:
+        out.update({"scope": "incremental", "since": prev["head_sha"],
+                    "why": "前回レビューした %s からの差分だけを見る" % prev["head_sha"][:7]})
+    print(json.dumps(out, ensure_ascii=False))
+
+
 def cmd_record(a):
     items = load_items(a.items)
     s = summarize(a.run) if a.run else None
@@ -485,6 +556,26 @@ def cmd_record(a):
     # セキュリティの指摘があれば深掘り（own-security）を要求する（SKILL の昇格条件 D を機械で守る）
     if a.run and not a.no_diff and a.escalate != "true" and any(it["category"] == "security" for it in items):
         die("セキュリティの指摘（category=security）があります。own-security を回し、--escalate true で記録してください")
+    prev = read_json(a.previous) if a.previous else {}
+    is_dry = bool(a.run) and os.path.exists(os.path.join(a.run, "dry-run.flag"))
+    chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", is_dry)
+    scope = {"scope": "full"}
+    if a.run and not a.no_diff:
+        scope = read_json(os.path.join(a.run, "scope.json")) or {"scope": "full"}
+        if scope.get("scope") not in ("full", "incremental"):
+            die("run ディレクトリの scope.json が不正です（scope=%r）" % scope.get("scope"))
+        if scope["scope"] == "incremental":
+            if not chained or scope.get("since") != prev.get("head_sha") or prev.get("head_sha") == a.head:
+                die("差分レビューの比較元（%s）が、同じブランチの前回の記録の head_sha（%s）とつながりません。"
+                    "run-reviews.sh --full で全体をレビューしてください"
+                    % (str(scope.get("since"))[:7], str(prev.get("head_sha"))[:7]))
+        try:
+            with open(os.path.join(a.run, "escalation.json"), encoding="utf-8") as f:
+                size_skipped = json.load(f).get("size_skipped") is True
+        except (OSError, ValueError, AttributeError):
+            size_skipped = False
+        if size_skipped and not chained:
+            die("規模による昇格を飛ばした run ですが、前回の記録とつながりません（規模の判定は 1 周目に要る）")
     given = a.verdict
     floor = s["floor"] if s else "pass"
     if a.no_diff:
@@ -540,21 +631,29 @@ def cmd_record(a):
 
     # 前回の記録で fixed にした項目は、HEAD が進んだ新しいレビューで再レビュー済みとして残す
     prev_fixed = []
-    try:
-        with open(a.previous, encoding="utf-8") as f:
-            prev = json.load(f)
-    except (OSError, ValueError, TypeError):
-        prev = {}
-    if not isinstance(prev, dict):
-        prev = {}
+    carried = []
+    incremental = scope.get("scope") == "incremental"
     if prev.get("branch") == a.branch and prev.get("head_sha") and prev.get("head_sha") != a.head:
         for it in prev.get("must_address") or []:
+            if not isinstance(it, dict):
+                continue
             if it.get("status") == "fixed" and not it.get("re_reviewed_sha"):
                 c = dict(it)
                 c["id"] = "prev-" + str(it.get("id"))
                 c["re_reviewed_sha"] = a.head
                 c["previous_head_sha"] = prev.get("head_sha")
                 prev_fixed.append(c)
+            elif incremental and not (it.get("status") == "fixed" and it.get("re_reviewed_sha")):
+                # 差分レビューは前回より前のコードを見直さないので、同じ指摘は出直さない。
+                # 片づいていない項目（と、片づいた accepted）を引き継いで落とさない
+                c = dict(it)
+                iid = str(it.get("id"))
+                c["id"] = iid if iid.startswith("carry-") else "carry-" + iid
+                c["carried_from"] = prev.get("head_sha")
+                carried.append(c)
+    if carried:
+        level = max([level] + [TIER_LEVEL.get(it.get("tier"), 1) for it in carried])
+        verdict = [k for k, v in LEVEL.items() if v == level][0]
 
     rec = {
         "version": 3,
@@ -573,8 +672,18 @@ def cmd_record(a):
         "report": a.report or "",
         "recorded_at": now(),
         "sources": (s["sources"] if s else {}),
-        "must_address": items + prev_fixed,
+        "must_address": items + carried + prev_fixed,
     }
+    if a.mode == "branch" and not a.no_diff:
+        # チェーンの記録（次の周の plan と pre-push が読む）
+        rec["scope"] = scope.get("scope", "full")
+        rec["chain_base"] = a.merge_base
+        base_count = prev["full_count"] if chained else 0
+        rec["full_count"] = base_count + (1 if rec["scope"] == "full" else 0)
+        if rec["scope"] == "incremental":
+            rec["since_sha"] = scope.get("since")
+    elif a.no_diff:
+        rec["scope"] = "none"
     if a.run and os.path.exists(os.path.join(a.run, "dry-run.flag")):
         # ダミー実行（AI_REVIEW_DRY_RUN=1）の結果。pre-push は AI_REVIEW_ALLOW_DRY=1 が無ければ拒む
         rec["dry_run"] = True
@@ -612,6 +721,10 @@ def cmd_check(a):
     except (OSError, ValueError) as e:
         die("latest.json を読めません: %s" % e, 2)
     bad = unresolved(rec, a.head)
+    if rec.get("scope") == "incremental" and not (
+            isinstance(rec.get("full_count"), int) and rec["full_count"] >= FULL_REVIEWS_BEFORE_PUSH):
+        print("-\t-\t-\t差分レビューの記録です。push の前に最後の全体レビューが要る（/ai-review を再実行）")
+        sys.exit(1)
     if rec.get("verdict") == "must-address" and not (rec.get("must_address") or []):
         # pre-push と同じ基準: must-address なのに項目が無い記録は壊れている
         print("-\t-\t-\tverdict=must-address なのに項目が無い（記録が壊れている）")
@@ -757,7 +870,22 @@ def main():
     r.add_argument("--previous", default="")
     r.add_argument("--rules", action="append")
     r.add_argument("--no-diff", action="store_true")
+    r.add_argument("--merge-base", default="")
+    r.add_argument("--prev-ancestor", default="false")
     r.set_defaults(fn=cmd_record)
+
+    pl = sp.add_parser("plan")
+    pl.add_argument("--latest", required=True)
+    pl.add_argument("--head", required=True)
+    pl.add_argument("--branch", required=True)
+    pl.add_argument("--merge-base", required=True)
+    pl.add_argument("--prev-ancestor", default="false")
+    pl.add_argument("--files", type=int, required=True)
+    pl.add_argument("--added", type=int, required=True)
+    pl.add_argument("--rules", action="append")
+    pl.add_argument("--full", action="store_true")
+    pl.add_argument("--dry", action="store_true")
+    pl.set_defaults(fn=cmd_plan)
 
     c = sp.add_parser("check")
     c.add_argument("--latest", required=True)

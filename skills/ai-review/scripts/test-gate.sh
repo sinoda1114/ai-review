@@ -461,6 +461,75 @@ git config --local --unset core.hooksPath
 run --out .review-reports/rhp2
 ! grep -q 'core.hooksPath' .review-reports/rhp2/status.txt && ok "設定が無ければ WARN を出さない" || ng "設定が無いのに WARN"
 
+echo "13. 差分レビュー（大きいブランチの 2 周目以降は、前回レビューした SHA からの差分だけを見る）"
+G checkout -q -b inc origin/main
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+echo 'p' > p1.js; echo 'q' > p2.js; G add p1.js p2.js; G commit -qm big
+sget(){ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); v=d.get(sys.argv[2]); print(json.dumps(v) if isinstance(v,bool) or v is None else v)' "$1" "$2"; }
+rec13(){ local r="$1"; shift; bash "$RG" --escalate false --escalation-done false --report "$r/report.md" "$@" >"$T/rg.out" 2>&1; }
+# 1 周目: 前回の記録とつながらない → 全体
+run --out .review-reports/i1
+[ "$(sget .review-reports/i1/scope.json scope)" = "full" ] && ok "1 周目は全体をレビューする" || ng "1 周目の scope: $(cat .review-reports/i1/scope.json 2>&1)"
+h1="$(git rev-parse HEAD)"
+AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_VERDICT=MUST-ADDRESS bash "$RR" --out .review-reports/i1 >/dev/null 2>&1
+iti="$(items '[{"id":"R1","source":"own-review","file":"p1.js","line":1,"tier":"MUST-ADDRESS","severity":"Medium","summary":"境界の値で落ちる","high_risk":false,"category":"correctness"},{"id":"R2","source":"own-review","file":"p2.js","line":1,"tier":"MUST-ADDRESS","severity":"Low","summary":"空文字で落ちる","high_risk":false,"category":"correctness"}]')"
+rec13 .review-reports/i1 --verdict must-address --items "$iti" || ng "1 周目の記録: $(cat "$T/rg.out")"
+[ "$(jget scope)" = "full" ] && [ "$(jget full_count)" = "1" ] && ok "記録に scope=full・full_count=1 を残す" || ng "1 周目の記録: scope=$(jget scope) full_count=$(jget full_count)"
+bash "$RI" --id R1 --fixed --note "境界を直した" >/dev/null 2>&1
+echo 'p fixed' > p1.js; G commit -qam fix1
+# 2 周目: 前回の記録につながり、差分が大きい → 前回の SHA からの差分だけ
+run --out .review-reports/i2
+[ "$(sget .review-reports/i2/scope.json scope)" = "incremental" ] && [ "$(sget .review-reports/i2/scope.json since)" = "$h1" ] && ok "2 周目は前回レビューした SHA からの差分をレビューする" || ng "2 周目の scope: $(cat .review-reports/i2/scope.json 2>&1)"
+grep -q -- "exec review --base $h1 " .review-reports/i2/codex-review.md && ok "Codex の比較元も前回レビューした SHA にする" || ng "Codex の比較元: $(grep -o 'exec review --base [^ ]*' .review-reports/i2/codex-review.md)"
+grep -q "比較範囲: $h1\.\.\.HEAD" .review-reports/i2/own-review.prompt.md && ok "自前観点のプロンプトの比較範囲も前回の SHA から" || ng "プロンプトの比較範囲: $(grep '比較範囲' .review-reports/i2/own-review.prompt.md)"
+[ "$(cat .review-reports/i2/changed-files.txt)" = "p1.js" ] && ok "判定表の対象は前回からの変更ファイルだけ" || ng "変更ファイル: $(cat .review-reports/i2/changed-files.txt)"
+rec13 .review-reports/i2 --verdict pass || ng "2 周目の記録: $(cat "$T/rg.out")"
+[ "$(jget scope)" = "incremental" ] && [ "$(jget since_sha)" = "$h1" ] && [ "$(jget full_count)" = "1" ] && ok "記録に scope=incremental・since_sha を残す" || ng "2 周目の記録: $(jget scope) $(jget since_sha) $(jget full_count)"
+python3 -c 'import json,sys; m={i["id"]:i for i in json.load(open(sys.argv[1]))["must_address"]}; sys.exit(0 if m.get("prev-R1",{}).get("re_reviewed_sha") and m.get("carry-R2",{}).get("status")=="open" else 1)' "$latest" \
+  && ok "fixed は再レビュー済み（prev-）、未処理は carry- で引き継ぐ（差分レビューでは同じ指摘が出直さないため）" || ng "引き継ぎ: $(jget must_address)"
+[ "$(jget verdict)" = "must-address" ] && ok "引き継いだ未処理の項目があれば must-address" || ng "verdict=$(jget verdict)"
+bash "$RI" --id carry-R2 --accepted --reason "呼び出し元 p0.js:3 で空文字を弾いている" >/dev/null 2>&1 && bash "$RI" --id carry-R2 --verifier upheld --note "検証: 成立" >/dev/null 2>&1 \
+  && ok "引き継いだ未処理の項目は今の HEAD で片づけられる" || ng "carry-R2 を処理できない"
+hook && ng "全体のレビューを 1 回しか経ていない差分レビューの記録で push を通した" || ok "差分レビューの記録は、最後の全体レビューを経るまで push を止める"
+grep -q '全体' "$T/hook.out" && ok "拒否理由に最後の全体レビューが要ることを出す" || ng "拒否理由: $(cat "$T/hook.out")"
+# 3 周目: 差分レビューが片づいた → 最後の全体レビュー（規模による昇格はしない）
+run --out .review-reports/i3
+[ "$(sget .review-reports/i3/scope.json scope)" = "full" ] && [ "$(sget .review-reports/i3/scope.json no_size)" = "true" ] && ok "差分レビューが片づいたら最後に全体を見る（規模による昇格は 1 周目だけ）" || ng "3 周目の scope: $(cat .review-reports/i3/scope.json 2>&1)"
+rec13 .review-reports/i3 --verdict pass || ng "3 周目の記録: $(cat "$T/rg.out")"
+[ "$(jget full_count)" = "2" ] && hook && ok "最後の全体レビューが通れば push を通す" || ng "3 周目: full_count=$(jget full_count) $(cat "$T/hook.out")"
+# 4 周目: 最後の全体レビューの後の修正は差分レビューで足りる
+echo 'q2' > p2.js; G commit -qam fix2
+run --out .review-reports/i4
+[ "$(sget .review-reports/i4/scope.json scope)" = "incremental" ] && ok "最後の全体レビューの後も差分レビューにする" || ng "4 周目の scope: $(cat .review-reports/i4/scope.json 2>&1)"
+rec13 .review-reports/i4 --verdict pass && [ "$(jget full_count)" = "2" ] && hook && ok "全体レビュー 2 回を経た差分レビューの記録は push を通す" || ng "4 周目: $(cat "$T/rg.out") $(cat "$T/hook.out")"
+# 改ざん: 前回の記録とつながらない差分レビューは記録しない
+echo 'r' > p3.js; G add p3.js; G commit -qm more
+run --out .review-reports/i5
+python3 - "$latest" <<'PY'
+import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["head_sha"]="0"*40; json.dump(d,open(p,"w"),ensure_ascii=False,indent=2)
+PY
+rec13 .review-reports/i5 --verdict pass && ng "前回の記録とつながらない差分レビューを記録できた" || ok "比較元が前回の記録の head_sha でない差分レビューは記録しない"
+# --full で全体を強制できる。規模の小さいブランチは常に全体
+run --out .review-reports/i6 --full
+[ "$(sget .review-reports/i6/scope.json scope)" = "full" ] && ok "--full なら全体をレビューする" || ng "--full: $(cat .review-reports/i6/scope.json 2>&1)"
+rm -f .ai-review/escalation-rules.local.txt
+rec13 .review-reports/i6 --verdict pass >/dev/null 2>&1
+echo 's' >> p3.js; G commit -qam small
+run --out .review-reports/i7
+[ "$(sget .review-reports/i7/scope.json scope)" = "full" ] && ok "差分が小さいブランチは毎回全体をレビューする" || ng "小さい差分: $(cat .review-reports/i7/scope.json 2>&1)"
+# 深掘り（--security）は同じ run の比較範囲を使う
+printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+rec13 .review-reports/i7 --verdict pass >/dev/null 2>&1
+echo 't' >> p1.js; G commit -qam t
+run --out .review-reports/i8; run --out .review-reports/i8 --security
+[ "$(cat .review-reports/i8/reviewed_base.security 2>/dev/null)" = "$(sget .review-reports/i8/scope.json since)" ] && ok "差分レビューの深掘りも同じ比較範囲を使う" || ng "深掘りの比較元: $(cat .review-reports/i8/reviewed_base.security 2>&1)"
+rm -rf .ai-review
+# 昇格判定の --no-size
+echo '{}' > /dev/null
+o="$(bash "$here/escalation-check.sh" --no-size --rules <(printf 'max_files 0\nmax_added 0\n') --local-rules /dev/null)"
+printf '%s' "$o" | grep -q 'C:size' && ng "--no-size でも規模で昇格した: $o" || ok "--no-size なら規模では昇格しない"
+printf '%s' "$o" | grep -q '"size_skipped":true' && ok "規模の判定を飛ばしたことを残す" || ng "size_skipped なし: $o"
+
 echo "12a. インストール先に依存しない"
 grep -q '__AI_REVIEW_SKILL_DIR__' "$HOOK" && ok "pre-push はスキルの場所を埋め込む場所（__AI_REVIEW_SKILL_DIR__）を持つ" || ng "pre-push にスキルの場所の埋め込み口が無い"
 sd0="$here/.."; grep -rn '~/.claude/skills/ai-review' "$sd0/hooks" "$sd0/scripts/gate.py" "$sd0/scripts/resolve-item.sh" "$sd0/scripts/record-gate.sh" "$sd0/scripts/run-reviews.sh" >/dev/null && ng "スクリプト・フックに ~/.claude/skills/ai-review の決め打ちが残っている" || ok "スクリプト・フックに導入先の決め打ちが無い"
