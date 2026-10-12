@@ -530,6 +530,16 @@ o="$(bash "$here/escalation-check.sh" --no-size --rules <(printf 'max_files 0\nm
 printf '%s' "$o" | grep -q 'C:size' && ng "--no-size でも規模で昇格した: $o" || ok "--no-size なら規模では昇格しない"
 printf '%s' "$o" | grep -q '"size_skipped":true' && ok "規模の判定を飛ばしたことを残す" || ng "size_skipped なし: $o"
 
+echo "13a. --incremental なら小さい差分でも差分レビューにする"
+G checkout -q -b inc3 origin/main
+echo 'w' > w1.js; G add w1.js; G commit -qm small1
+run --out .review-reports/k1; rec13 .review-reports/k1 --verdict pass >/dev/null 2>&1
+echo 'w2' >> w1.js; G commit -qam small2
+run --out .review-reports/k2
+[ "$(sget .review-reports/k2/scope.json scope)" = "full" ] && ok "小さい差分は既定では全体" || ng "k2: $(cat .review-reports/k2/scope.json)"
+run --out .review-reports/k3 --incremental
+[ "$(sget .review-reports/k3/scope.json scope)" = "incremental" ] && ok "--incremental なら小さい差分でも差分レビュー" || ng "k3: $(cat .review-reports/k3/scope.json)"
+
 echo "13b. 1 周目で深掘りが加わったブランチは、最後の全体レビューでも深掘りを加える"
 G checkout -q -b inc2 origin/main
 mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt

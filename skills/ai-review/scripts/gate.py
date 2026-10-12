@@ -524,7 +524,7 @@ def cmd_plan(a):
         out["why"] = "--full の指定"
     elif not chained:
         out["why"] = "前回の記録とつながらない（1 周目・別のブランチ・起点が変わった）"
-    elif not large:
+    elif not large and not a.incremental:
         out["why"] = "差分が小さい（max_files / max_added 以下）ので毎回全体を見る"
     elif prev.get("head_sha") == a.head:
         out["why"] = "前回と同じ HEAD"
@@ -893,6 +893,7 @@ def main():
     pl.add_argument("--rules", action="append")
     pl.add_argument("--full", action="store_true")
     pl.add_argument("--dry", action="store_true")
+    pl.add_argument("--incremental", action="store_true", help="規模に関係なく、つながっていれば差分レビューにする（/ai-review-fix の 2 周目以降）")
     pl.set_defaults(fn=cmd_plan)
 
     c = sp.add_parser("check")

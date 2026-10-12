@@ -11,6 +11,7 @@
 #     --deep         強化版。通常の 2 本に加えて own-security・own-review（Fable 5.1）・Codex（Astra）を並列で起動する
 #     --timeout      各コマンドの上限秒（既定 900）
 #     --full         差分レビューにせず、必ず全体（origin/HEAD...HEAD）をレビューする
+#     --incremental  規模に関係なく、前回の記録とつながっていれば差分レビューにする（/ai-review-fix の 2 周目以降）
 #
 # 範囲の自動選択（branch モード。DESIGN-v3.md §8）: 差分が大きい（escalation-rules の max_files /
 # max_added を超える）ブランチでは、前回の記録（.review-reports/latest.json）とつながる 2 周目以降、
@@ -72,6 +73,7 @@ while [ $# -gt 0 ]; do
     --out) out="$2"; shift 2 ;;
     --base) base="$2"; base_given=1; shift 2 ;;
     --full) force_full=1; shift ;;
+    --incremental) force_incr=1; shift ;;
     --local) mode="local"; shift ;;
     --no-codex) use_codex=0; shift ;;
     --security) security=1; shift ;;
@@ -167,6 +169,7 @@ if [ "$mode" != "local" ] && [ $base_given -eq 0 ] && [ -n "$base" ]; then
       --files "${plan_files:-0}" --added "${plan_added:-0}"
       --rules "$script_dir/../escalation-rules.txt" --rules "$plan_top/.ai-review/escalation-rules.local.txt")
     [ $force_full -eq 1 ] && plan_args+=(--full)
+    [ "${force_incr:-0}" -eq 1 ] && plan_args+=(--incremental)
     [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && plan_args+=(--dry)
     if [ -n "$plan_mb" ] && "$py" -I "$gate_py" "${plan_args[@]}" > "$out/scope.json.tmp" 2>> "$status"; then
       mv "$out/scope.json.tmp" "$out/scope.json"
