@@ -589,8 +589,8 @@ hook >/dev/null 2>&1 && ng "最後の全体レビューを経ずに push を通�
 # R2: 差分レビューでも、秘密情報の判定はブランチ全体で行う
 G checkout -q -b sec1 origin/main
 echo 1 > e1.js; echo 2 > e2.js; echo 'K=1' > .env; G add -f e1.js e2.js .env; G commit -qm withenv
-AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/s1
-bash "$RG" --verdict pass --escalate true --escalation-done false --report .review-reports/s1/report.md >/dev/null 2>&1
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/s1; run --out .review-reports/s1 --security
+bash "$RG" --verdict pass --escalate true --escalation-done true --report .review-reports/s1/report.md >"$T/rg.out" 2>&1 || ng "s1 の記録: $(cat "$T/rg.out")"
 echo 3 >> e1.js; G commit -qam e
 AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/s2
 [ "$(sget .review-reports/s2/scope.json scope)" = "incremental" ] || ng "s2 が差分レビューにならない: $(cat .review-reports/s2/scope.json)"
@@ -626,6 +626,66 @@ echo 3 >> g1.js; G commit -qam fixg1
 run --out .review-reports/y2; rec13 .review-reports/y2 --verdict pass >/dev/null 2>&1
 python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); s={i["id"]: i["status"] for i in d["must_address"]}; sys.exit(0 if s.get("prev-R1") == "fixed" else 1)' && ok "差分に入ったファイルの fixed は再レビュー済みにする（R5）" || ng "y2: $(python3 -c 'import json; print([(i["id"], i["status"]) for i in json.load(open(".review-reports/latest.json"))["must_address"]])')"
 rm -rf .ai-review
+
+echo "13e. 差分レビューの穴（2 回目の /ai-review の指摘 S1〜S7）"
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+ids(){ python3 -c 'import json; print(" ".join("%s:%s" % (i["id"], i["status"]) for i in json.load(open(".review-reports/latest.json"))["must_address"]))'; }
+mk(){ printf '[{"id":"%s","source":"own-review","file":"%s","line":1,"tier":"%s","severity":"Medium","category":"%s","summary":"%s","high_risk":%s}]' "$1" "$2" "$3" "$4" "$5" "$6" > "$T/$1-$7.json"; echo "$T/$1-$7.json"; }
+# S1: 深掘りを済ませていない記録とは、チェーンをつながない
+G checkout -q -b e1 origin/main
+echo 1 > k1.js; echo 2 > k2.js; G add k1.js k2.js; G commit -qm big
+run --out .review-reports/e1a
+bash "$RG" --verdict pass --escalate true --escalation-done false --report .review-reports/e1a/report.md >/dev/null 2>&1
+echo 3 >> k1.js; G commit -qam e1
+run --out .review-reports/e1b
+[ "$(sget .review-reports/e1b/scope.json scope)" = "full" ] && ok "深掘りが済んでいない記録の次は全体レビュー（S1）" || ng "e1b: $(cat .review-reports/e1b/scope.json)"
+# S2・S3: パスの形・削除で fixed を open に戻さない
+G checkout -q -b e2 origin/main
+echo 1 > m1.js; echo 2 > m2.js; echo 3 > m3.js; G add m1.js m2.js m3.js; G commit -qm big
+run --out .review-reports/e2a
+python3 - "$T/e2.json" <<'PY'
+import json, sys
+it = lambda i, f: {"id": i, "source": "own-review", "file": f, "line": 1, "tier": "MUST-ADDRESS", "severity": "Medium",
+                   "category": "correctness", "summary": "x " + i, "high_risk": False}
+json.dump([it("P1", "./m1.js"), it("P2", "m2.js")], open(sys.argv[1], "w"))
+PY
+rec13 .review-reports/e2a --verdict must-address --items "$T/e2.json" >/dev/null 2>&1
+bash "$RI" --id P1 --fixed --note n >/dev/null 2>&1; bash "$RI" --id P2 --fixed --note n >/dev/null 2>&1
+echo 4 >> m1.js; G rm -q m2.js; G commit -qam fix
+run --out .review-reports/e2b; rec13 .review-reports/e2b --verdict pass >/dev/null 2>&1
+case " $(ids) " in *" prev-P1:fixed "*) ok "./ 付きのパスの fixed も、差分に入っていれば再レビュー済み（S2）" ;; *) ng "S2: $(ids)" ;; esac
+case " $(ids) " in *" prev-P2:fixed "*) ok "ファイルを消して直した fixed も再レビュー済み（S3）" ;; *) ng "S3: $(ids)" ;; esac
+# S4: 引き継ぐ項目の ID を重ねない
+G checkout -q -b e4 origin/main
+echo 1 > n1.js; echo 2 > n2.js; G add n1.js n2.js; G commit -qm big
+run --out .review-reports/e4a; rec13 .review-reports/e4a --verdict must-address --items "$(mk R1 n1.js MUST-ADDRESS correctness first false a)" >/dev/null 2>&1
+echo 3 >> n2.js; G commit -qam e4b
+run --out .review-reports/e4b; rec13 .review-reports/e4b --verdict must-address --items "$(mk R1 n2.js MUST-ADDRESS correctness second false b)" >/dev/null 2>&1
+echo 4 >> n2.js; G commit -qam e4c
+run --out .review-reports/e4c; rec13 .review-reports/e4c --verdict pass >/dev/null 2>&1
+python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); x=[i["id"] for i in d["must_address"]]; sys.exit(0 if len(x)==len(set(x))==2 else 1)' && ok "引き継ぐ項目の ID は一意（S4）" || ng "S4: $(ids)"
+# S5: 差分レビューで引き継ぐ accepted は、検証と人の承認をやり直す
+G checkout -q -b e5 origin/main
+echo 1 > q1.js; echo 2 > q2.js; G add q1.js q2.js; G commit -qm big
+run --out .review-reports/e5a; rec13 .review-reports/e5a --verdict must-address --items "$(mk A1 q1.js MUST-ADDRESS correctness acc false a)" >/dev/null 2>&1
+bash "$RI" --id A1 --accepted --reason "呼び出し元 q2.js で弾いている" >/dev/null 2>&1; bash "$RI" --id A1 --verifier upheld --note ok >/dev/null 2>&1
+echo 3 >> q2.js; G commit -qam e5b
+run --out .review-reports/e5b; rec13 .review-reports/e5b --verdict pass >/dev/null 2>&1
+python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); a=[i for i in d["must_address"] if i["id"].endswith("A1")][0]; sys.exit(0 if a.get("verifier") == "pending" else 1)' && ok "引き継いだ accepted は検証をやり直す（S5）" || ng "S5: $(python3 -c 'import json; print(json.load(open(".review-reports/latest.json"))["must_address"])')"
+# S6: BLOCK・高リスク・セキュリティの fixed の次は全体レビュー
+G checkout -q -b e6 origin/main
+echo 1 > r1.js; echo 2 > r2.js; G add r1.js r2.js; G commit -qm big
+run --out .review-reports/e6a; rec13 .review-reports/e6a --verdict block --items "$(mk B1 r1.js BLOCK correctness blk false a)" >/dev/null 2>&1
+bash "$RI" --id B1 --fixed --note n >/dev/null 2>&1
+echo 3 >> r1.js; G commit -qam e6b
+run --out .review-reports/e6b
+[ "$(sget .review-reports/e6b/scope.json scope)" = "full" ] && ok "BLOCK の fixed の次は全体レビュー（S6）" || ng "S6: $(cat .review-reports/e6b/scope.json)"
+rm -rf .ai-review
+# S7: 混み合いの判定は Codex のエラー行に絞る
+G checkout -q -b e7 origin/main
+echo c > c7.js; G add c7.js; G commit -qm c7
+AI_REVIEW_CAPACITY_WAIT=0 AI_REVIEW_DRY_FAIL="codex-review:mention" run --out .review-reports/e7
+grep -q '混み合い' .review-reports/e7/status.txt && ng "at capacity を含むだけの別の失敗で回し直した（S7）" || ok "Codex の混み合いのエラー行でなければ回し直さない（S7）"
 
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main

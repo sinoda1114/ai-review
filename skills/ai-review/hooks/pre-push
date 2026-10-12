@@ -102,7 +102,7 @@ if [ "$mode" != "branch" ]; then
 fi
 
 # 差分レビュー（前回レビューした SHA からの差分だけを見た記録）は、全体のレビューを最初と最後の 2 回
-# 経ていなければ通さない（差分レビューは、触っていないコードとの組み合わせを見直さない。DESIGN-v3.md §8）
+# 経ていなければ通さない（差分レビューは、触っていないコードとの組み合わせを見直さない。DESIGN-v3.md §10）
 scope="$(get scope)"; full_count="$(get full_count)"
 if [ "$scope" = "incremental" ]; then
   case "$full_count" in ''|*[!0-9]*) full_count=0 ;; esac

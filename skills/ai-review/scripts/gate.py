@@ -465,7 +465,7 @@ def load_items(path):
     return out
 
 
-# ---------------------------------------------------------------- 差分レビュー（DESIGN-v3.md §8）
+# ---------------------------------------------------------------- 差分レビュー（DESIGN-v3.md §10）
 # 大きいブランチでは、2 周目以降は前回レビューした SHA からの差分だけをレビューする。
 # 1 周目（全体）から差分レビューが途切れずにつながっていること（チェーン）を記録で確かめ、
 # push の前には全体のレビューを 2 回（最初と最後）経ていることを求める。
@@ -508,6 +508,9 @@ def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
         and prev.get("chain_base")
         and prev.get("chain_base") == merge_base
         and isinstance(prev.get("full_count"), int) and prev["full_count"] >= 1
+        # 深掘りを求められたのに済ませていない記録とはつながない（つなぐと、次の差分の記録で深掘りの義務が消える）
+        and not (prev.get("escalate") is True and prev.get("escalation_done") is not True
+                 and prev.get("skipped_by_user") is not True)
         and isinstance(prev.get("head_sha"), str)
         and bool(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", prev["head_sha"]))
         and prev_ancestor
@@ -530,6 +533,11 @@ def cmd_plan(a):
         out["why"] = "差分が小さい（max_files / max_added 以下）ので毎回全体を見る"
     elif prev.get("head_sha") == a.head:
         out["why"] = "前回と同じ HEAD"
+    elif any(isinstance(it, dict) and it.get("status") == "fixed" and not it.get("re_reviewed_sha")
+             and (it.get("tier") == "BLOCK" or it.get("high_risk") is True or it.get("category") == "security")
+             for it in prev.get("must_address") or []):
+        # 差分レビューは「そのファイルが差分にあるか」までしか確かめられない。重い項目の fixed は全体で確かめる
+        out["why"] = "BLOCK・高リスク・セキュリティの項目を fixed にしたので、全体で確かめる"
     elif prev.get("scope") == "incremental" and clean and prev["full_count"] < FULL_REVIEWS_BEFORE_PUSH:
         out["why"] = "差分レビューが片づいたので、最後に全体を見る"
     else:
@@ -650,23 +658,35 @@ def cmd_record(a):
     carried = []
     incremental = scope.get("scope") == "incremental"
     changed = set()
+    taken = {str(it["id"]) for it in items}
+
+    def carry_id(iid):
+        """引き継ぐ項目の ID。今回の項目・先に引き継いだ項目と重なれば番号を足す（resolve-item が最初の 1 件しか触れないため）"""
+        iid = str(iid)
+        base = iid if iid.startswith("carry-") else "carry-" + iid
+        cid, n = base, 2
+        while cid in taken:
+            cid, n = "%s-%d" % (base, n), n + 1
+        taken.add(cid)
+        return cid
     if incremental and a.run:
-        try:
-            with open(os.path.join(a.run, "changed-files.txt"), encoding="utf-8") as f:
-                changed = {ln.strip() for ln in f if ln.strip()}
-        except OSError:
-            changed = set()
+        # 削除・名前変更の旧パスも含む一覧（changed-files-all.txt）を使う。判定表用の changed-files.txt は削除を除いている
+        for name in ("changed-files.txt", "changed-files-all.txt"):
+            try:
+                with open(os.path.join(a.run, name), encoding="utf-8") as f:
+                    changed |= {_repo_path(ln.strip()) for ln in f if ln.strip()}
+            except OSError:
+                pass
     if prev.get("branch") == a.branch and prev.get("head_sha") and prev.get("head_sha") != a.head:
         for it in prev.get("must_address") or []:
             if not isinstance(it, dict):
                 continue
             if (it.get("status") == "fixed" and not it.get("re_reviewed_sha") and incremental
-                    and it.get("file") not in changed):
+                    and _repo_path(it.get("file")) not in changed):
                 # 差分レビューは差分の中しか見ないので、差分にそのファイルが無い fixed は確かめられていない。
                 # 再レビュー済みにせず、open に戻して引き継ぐ（偽の fixed で BLOCK・高リスクを抜けさせない）
                 c = dict(it, status="open")
-                iid = str(it.get("id"))
-                c["id"] = iid if iid.startswith("carry-") else "carry-" + iid
+                c["id"] = carry_id(it.get("id"))
                 c["carried_from"] = prev.get("head_sha")
                 c["note"] = "fixed だったが、差分レビューの差分にこのファイルが無いので確かめられていない"
                 carried.append(c)
@@ -680,11 +700,11 @@ def cmd_record(a):
                 # 差分レビューは前回より前のコードを見直さないので、同じ指摘は出直さない。
                 # 片づいていない項目（と、片づいた accepted）を引き継いで落とさない
                 c = dict(it)
-                iid = str(it.get("id"))
-                c["id"] = iid if iid.startswith("carry-") else "carry-" + iid
+                c["id"] = carry_id(it.get("id"))
                 c["carried_from"] = prev.get("head_sha")
-                if c.get("status") == "accepted" and c.get("file") in changed:
-                    # 理由の前提のコードが差分で変わったので、検証と人の承認をやり直す
+                if c.get("status") == "accepted":
+                    # 理由が差分のどこ（別のファイルの呼び出し元など）に依存するかは機械では分からない。
+                    # HEAD が進んだので、検証と人の承認をやり直す（理由そのものは残す）
                     c["verifier"] = "pending"
                     c.pop("approved_by", None)
                     c.pop("approval_note", None)

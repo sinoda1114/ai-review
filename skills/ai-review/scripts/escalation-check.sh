@@ -8,7 +8,7 @@
 #     --rules        共通ルール（既定: このスクリプトと同じディレクトリの ../escalation-rules.txt）
 #     --local-rules  プロジェクト追記（既定: $PWD/.ai-review/escalation-rules.local.txt、無ければ無視）
 #     --no-size      規模（max_files / max_added）では昇格させない。同じブランチの 2 周目以降に使う
-#                    （規模による深掘りは 1 周目で済んでいる。DESIGN-v3.md §8）
+#                    （規模による深掘りは 1 周目で済んでいる。DESIGN-v3.md §10）
 #
 # 出力: JSON 1 行を stdout に出す。
 #   {"escalate":true|false,"reasons":[...],"secret_paths":[...],"files":N,"added":N,"base":"...","size_skipped":true|false}

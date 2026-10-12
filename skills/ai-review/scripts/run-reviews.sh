@@ -13,7 +13,7 @@
 #     --full         差分レビューにせず、必ず全体（origin/HEAD...HEAD）をレビューする
 #     --incremental  規模に関係なく、前回の記録とつながっていれば差分レビューにする（/ai-review-fix の 2 周目以降）
 #
-# 範囲の自動選択（branch モード。DESIGN-v3.md §8）: 差分が大きい（escalation-rules の max_files /
+# 範囲の自動選択（branch モード。DESIGN-v3.md §10）: 差分が大きい（escalation-rules の max_files /
 # max_added を超える）ブランチでは、前回の記録（.review-reports/latest.json）とつながる 2 周目以降、
 # 前回レビューした SHA から HEAD までの差分だけをレビューする。差分レビューが片づいたら最後に 1 回
 # 全体を見る。2 周目以降は規模による昇格をしない。決めた範囲は <out>/scope.json に残し、--security は
@@ -40,7 +40,8 @@
 # 環境変数 AI_REVIEW_DRY_RUN=1 で実コマンドを起動せずダミー出力を書く（テスト用）。
 #   AI_REVIEW_DRY_TABLE_MISSING=1|once  自前観点のダミー出力から判定表の 1 行目を抜く（once は初回だけ）
 #   AI_REVIEW_DRY_VERDICT=PASS|MUST-ADDRESS|BLOCK  自前観点のダミー出力の結論
-#   AI_REVIEW_DRY_FAIL="<名前>:capacity|other,..."  そのレビュアーを初回だけ失敗させる（capacity は Codex の混み合いの文言を出す）
+#   AI_REVIEW_DRY_FAIL="<名前>:capacity|mention|other,..."  そのレビュアーを初回だけ失敗させる（capacity は Codex の混み合いの
+#     エラー行を出す。mention は「at capacity」という語を含むだけの別の失敗）
 #   AI_REVIEW_DRY_FAIL_RETRY=1  回し直しも同じように失敗させる
 set -uo pipefail
 
@@ -347,6 +348,8 @@ if [ "$mode" = "local" ]; then
     done >> "$changed"
 elif [ -n "$base" ]; then
   git -C "$repo_top" diff --numstat --no-renames --diff-filter=d -z "$base...$reviewed_sha" 2>/dev/null | list_numstat >> "$changed"
+  # 削除・名前変更の旧パスも含む一覧（record が差分レビューの fixed の照合に使う）
+  git -C "$repo_top" diff --name-only --no-renames "$base...$reviewed_sha" 2>/dev/null > "$out/changed-files-all.txt"
 fi
 echo "changed_files=$(wc -l < "$changed" | tr -d ' ')" >> "$status"
 # リポジトリ単位の core.hooksPath はグローバルより優先されるので、グローバルに入れた pre-push ゲートが動かない
@@ -503,6 +506,7 @@ dry_fail() {
   : > "$out/$1.md"
   case "$(dry_fail_mode "$1")" in
     capacity) echo "ERROR: Selected model is at capacity. Please try a different model." >> "$out/$1.err" ;;
+    mention) printf 'note: the docs say "at capacity" sometimes\nERROR: dry run failure\n' >> "$out/$1.err" ;;
     *) echo "ERROR: dry run failure" >> "$out/$1.err" ;;
   esac
   return 1
@@ -705,7 +709,8 @@ for n in $names; do
   case "$n" in codex-*) ;; *) continue ;; esac
   is_failed "$n" || continue
   is_timed_out "$n" && continue  # タイムアウトは混み合いの回し直しの対象にしない（通っても TIMEOUT として捨てられる）
-  grep -q 'at capacity' "$out/$n.err" 2>/dev/null || continue
+  # Codex のエラー行の形だけを見る（別の失敗の出力に「at capacity」という語が混ざっても待たない）
+  tail -n 20 "$out/$n.err" 2>/dev/null | grep -qE '^(ERROR|error)[: ].*Selected model is at capacity' || continue
   sleep "${AI_REVIEW_CAPACITY_WAIT:-60}"
   failed="$(printf ' %s ' "$failed" | sed "s/ $n / /g")"
   rerun_one "$n" "Codex の混み合い: 待ってから単独で再実行"; rc=$?
