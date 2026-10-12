@@ -16,7 +16,7 @@ ng(){ echo "  FAIL $1"; fail=$((fail+1)); }
 G(){ git -c user.email=t@t -c user.name=t "$@"; }
 die(){ echo "準備に失敗: $1" >&2; exit 2; }
 P(){ G push -q --no-verify "$@" 2>/dev/null; }
-unset AI_REVIEW_BYPASS AI_REVIEW_DRY_TABLE_MISSING AI_REVIEW_DRY_VERDICT AI_REVIEW_DRY_CODEX AI_REVIEW_DRY_EMPTY
+unset AI_REVIEW_BYPASS AI_REVIEW_DRY_TABLE_MISSING AI_REVIEW_DRY_VERDICT AI_REVIEW_DRY_CODEX AI_REVIEW_DRY_EMPTY AI_REVIEW_DRY_FAIL AI_REVIEW_DRY_FAIL_RETRY
 export AI_REVIEW_DRY_SLEEP=0
 
 G init -q --bare -b main "$T/origin.git" || die "bare リポジトリ"
@@ -569,6 +569,22 @@ sd="$here/.."
 [ ! -e "$sd/scripts/jev-judge.py" ] && [ ! -e "$sd/scripts/jev-escalation.py" ] && ok "JEV のスクリプトを削除" || ng "JEV のスクリプトが残っている"
 grep -qi 'jev' "$sd/SKILL.md" "$sd/scripts/run-reviews.sh" "$sd/scripts/record-gate.sh" "$sd/hooks/pre-push" && ng "JEV の記述が残っている" || ok "SKILL.md・スクリプトに JEV の記述なし"
 grep -q 'commands/code-review.md\|ECC' "$sd/SKILL.md" "$sd/scripts/run-reviews.sh" && ng "ECC への依存が残っている" || ok "ECC（~/.claude/commands/code-review.md）に依存しない"
+
+echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
+G checkout -q -b cap1 origin/main
+echo 'c' > c1.js; G add c1.js; G commit -qm cap
+export AI_REVIEW_CAPACITY_WAIT=0
+AI_REVIEW_DRY_FAIL="codex-review:capacity" run --out .review-reports/c1
+grep -q '^retry codex-review .*混み合い' .review-reports/c1/status.txt && ok "混み合いなら回し直す" || ng "c1: $(cat .review-reports/c1/status.txt)"
+grep -q '^ok codex-review' .review-reports/c1/status.txt && [ -s .review-reports/c1/codex-review.md ] && ok "回し直しが通れば、その出力を使う" || ng "c1 の結果: $(grep codex-review .review-reports/c1/status.txt)"
+AI_REVIEW_DRY_FAIL="codex-review:capacity" AI_REVIEW_DRY_FAIL_RETRY=1 run --out .review-reports/c2
+[ "$(grep -c '^retry codex-review .*混み合い' .review-reports/c2/status.txt)" = "1" ] && ok "回し直しは 1 回だけ（ループしない）" || ng "c2: $(grep retry .review-reports/c2/status.txt)"
+grep -q 'FAILED codex-review' .review-reports/c2/status.txt && ok "回し直しも失敗すれば、失敗のまま残す" || ng "c2 の結果: $(grep codex-review .review-reports/c2/status.txt)"
+AI_REVIEW_DRY_FAIL="codex-review:other" run --out .review-reports/c3
+grep -q '混み合い' .review-reports/c3/status.txt && ng "混み合い以外の失敗で待った" || ok "混み合い以外の失敗では待たない"
+AI_REVIEW_DRY_FAIL="own-review:capacity" run --out .review-reports/c4
+grep -q '混み合い' .review-reports/c4/status.txt && ng "Claude 側の失敗を Codex の混み合いとして扱った" || ok "Claude 側の失敗は、この経路の対象にしない"
+unset AI_REVIEW_CAPACITY_WAIT
 
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]

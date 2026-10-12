@@ -40,6 +40,8 @@
 # 環境変数 AI_REVIEW_DRY_RUN=1 で実コマンドを起動せずダミー出力を書く（テスト用）。
 #   AI_REVIEW_DRY_TABLE_MISSING=1|once  自前観点のダミー出力から判定表の 1 行目を抜く（once は初回だけ）
 #   AI_REVIEW_DRY_VERDICT=PASS|MUST-ADDRESS|BLOCK  自前観点のダミー出力の結論
+#   AI_REVIEW_DRY_FAIL="<名前>:capacity|other,..."  そのレビュアーを初回だけ失敗させる（capacity は Codex の混み合いの文言を出す）
+#   AI_REVIEW_DRY_FAIL_RETRY=1  回し直しも同じように失敗させる
 set -uo pipefail
 
 CLAUDE_MODEL="claude-opus-5-5"
@@ -473,13 +475,30 @@ dry_write() {
   return 0
 }
 
+# ダミーの失敗（テスト用）: AI_REVIEW_DRY_FAIL に名前があれば、その種類を返す
+dry_fail_mode() {
+  local m
+  m="$(printf ',%s,' "${AI_REVIEW_DRY_FAIL:-}" | sed -n "s/.*,$1:\([a-z]*\),.*/\1/p")"
+  [ -n "$m" ] && echo "$m"
+}
+dry_fail() {
+  : > "$out/$1.md"
+  case "$(dry_fail_mode "$1")" in
+    capacity) echo "ERROR: Selected model is at capacity. Please try a different model." >> "$out/$1.err" ;;
+    *) echo "ERROR: dry run failure" >> "$out/$1.err" ;;
+  esac
+  return 1
+}
+
 # run_bg <name> <cmd...> : バックグラウンド起動し pid を返す。stdout は <out>/<name>.md、stderr は <name>.err
 pids=""; names=""
 run_bg() {
   local name="$1"; shift
   if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ]; then
     : > "$out/$name.err"
-    if [ "${AI_REVIEW_DRY_EMPTY:-0}" = "1" ]; then
+    if dry_fail_mode "$name" >/dev/null; then
+      ( dry_fail "$name" ) &
+    elif [ "${AI_REVIEW_DRY_EMPTY:-0}" = "1" ]; then
       # 空出力を作り、再試行の経路を通す（再試行するコマンドは sleep で代用する）
       printf '%s\0' sleep 30 > "$out/$name.cmd"; : > "$out/$name.md"
       ( sleep 1 ) &
@@ -623,7 +642,9 @@ is_failed() { case " $failed " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 # 同期実行 + `|| true` だと、途中まで出力して落ちた再試行が ok 扱いになり、応答待ちで止まるとゲート全体が戻らない。
 rerun_one() {
   local n="$1" why="$2" rp re=0 rc=0
-  if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && [ "${AI_REVIEW_DRY_EMPTY:-0}" != "1" ]; then
+  if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && [ "${AI_REVIEW_DRY_FAIL_RETRY:-0}" = "1" ] && dry_fail_mode "$n" >/dev/null; then
+    ( dry_fail "$n" ) &
+  elif [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && [ "${AI_REVIEW_DRY_EMPTY:-0}" != "1" ]; then
     ( dry_write "$n" ) &
   else
     [ -f "$out/$n.cmd" ] || return 1
@@ -658,6 +679,19 @@ for n in $names; do
     : > "$out/$n.md"
     echo "PARTIAL $n を $n.partial.md へ退避（タイムアウトのため未完成）" >> "$status"
   fi
+done
+
+# Codex の「混み合い」（Selected model is at capacity）は外のサービスの一時的な失敗なので、
+# 少し待って 1 回だけ単独で回し直す（2026-10-12 の測定で 2 回起きた。待ち時間は AI_REVIEW_CAPACITY_WAIT 秒）
+for n in $names; do
+  case "$n" in codex-*) ;; *) continue ;; esac
+  is_failed "$n" || continue
+  grep -q 'at capacity' "$out/$n.err" 2>/dev/null || continue
+  sleep "${AI_REVIEW_CAPACITY_WAIT:-60}"
+  failed="$(printf ' %s ' "$failed" | sed "s/ $n / /g")"
+  rerun_one "$n" "Codex の混み合い: 待ってから単独で再実行"; rc=$?
+  [ $rc -eq 2 ] && timed_out="$timed_out $n"
+  [ $rc -eq 1 ] && failed="$failed $n"
 done
 
 # 空出力は単独で 1 回だけ回し直す。
