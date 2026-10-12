@@ -530,6 +530,27 @@ o="$(bash "$here/escalation-check.sh" --no-size --rules <(printf 'max_files 0\nm
 printf '%s' "$o" | grep -q 'C:size' && ng "--no-size でも規模で昇格した: $o" || ok "--no-size なら規模では昇格しない"
 printf '%s' "$o" | grep -q '"size_skipped":true' && ok "規模の判定を飛ばしたことを残す" || ng "size_skipped なし: $o"
 
+echo "13b. 1 周目で深掘りが加わったブランチは、最後の全体レビューでも深掘りを加える"
+G checkout -q -b inc2 origin/main
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+echo 'u' > u1.js; echo 'v' > u2.js; G add u1.js u2.js; G commit -qm big2
+run --out .review-reports/j1; run --out .review-reports/j1 --security
+bash "$RG" --verdict pass --escalate true --escalation-done true --report .review-reports/j1/report.md >"$T/rg.out" 2>&1 || ng "j1 の記録: $(cat "$T/rg.out")"
+[ "$(jget chain_escalated)" = "true" ] && ok "1 周目で深掘りが加わったことを記録に残す（chain_escalated）" || ng "chain_escalated=$(jget chain_escalated)"
+echo 'u fixed' > u1.js; G commit -qam fixu
+run --out .review-reports/j2
+[ "$(sget .review-reports/j2/scope.json scope)" = "incremental" ] && [ "$(sget .review-reports/j2/scope.json force_escalation)" != "true" ] && ok "差分レビューの周は、その周の差分で深掘りを判定する（強制しない）" || ng "j2: $(cat .review-reports/j2/scope.json)"
+rec13 .review-reports/j2 --verdict pass || ng "j2 の記録: $(cat "$T/rg.out")"
+[ "$(jget chain_escalated)" = "true" ] && ok "chain_escalated を差分レビューの記録にも引き継ぐ" || ng "引き継ぎ chain_escalated=$(jget chain_escalated)"
+run --out .review-reports/j3
+[ "$(sget .review-reports/j3/scope.json scope)" = "full" ] && [ "$(sget .review-reports/j3/scope.json force_escalation)" = "true" ] && ok "最後の全体レビューでは深掘りを強制する" || ng "j3: $(cat .review-reports/j3/scope.json)"
+grep -q '"escalate": *true' .review-reports/j3/escalation.json && grep -q 'F:chain' .review-reports/j3/escalation.json && ok "escalation.json に昇格の理由（F:chain）を残す" || ng "j3 escalation: $(cat .review-reports/j3/escalation.json)"
+rec13 .review-reports/j3 --verdict pass && ng "最後の全体レビューを深掘りなしで記録できた" || ok "最後の全体レビューは深掘りなしでは記録しない"
+run --out .review-reports/j3 --security
+bash "$RG" --verdict pass --escalate true --escalation-done true --report .review-reports/j3/report.md >"$T/rg.out" 2>&1 && [ "$(jget full_count)" = "2" ] && hook \
+  && ok "深掘りを加えた最後の全体レビューが通れば push を通す" || ng "j3 の記録: $(cat "$T/rg.out") $(cat "$T/hook.out")"
+rm -rf .ai-review
+
 echo "12a. インストール先に依存しない"
 grep -q '__AI_REVIEW_SKILL_DIR__' "$HOOK" && ok "pre-push はスキルの場所を埋め込む場所（__AI_REVIEW_SKILL_DIR__）を持つ" || ng "pre-push にスキルの場所の埋め込み口が無い"
 sd0="$here/.."; grep -rn '~/.claude/skills/ai-review' "$sd0/hooks" "$sd0/scripts/gate.py" "$sd0/scripts/resolve-item.sh" "$sd0/scripts/record-gate.sh" "$sd0/scripts/run-reviews.sh" >/dev/null && ng "スクリプト・フックに ~/.claude/skills/ai-review の決め打ちが残っている" || ok "スクリプト・フックに導入先の決め打ちが無い"

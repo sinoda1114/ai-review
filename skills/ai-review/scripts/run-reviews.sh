@@ -367,6 +367,17 @@ if [ $security -eq 0 ] || [ ! -s "$out/escalation.json" ]; then
     fi
   fi
 fi
+# 1 周目で深掘りが加わったブランチの最後の全体レビュー（scope.json の force_escalation）は、深掘りを必ず加える
+if [ $security -eq 0 ] && [ -s "$out/escalation.json" ] && [ -s "$out/scope.json" ]; then
+  "$py" -I -c 'import json,sys
+sc = json.load(open(sys.argv[1], encoding="utf-8"))
+if sc.get("force_escalation") is True:
+    p = sys.argv[2]; d = json.load(open(p, encoding="utf-8"))
+    d["escalate"] = True
+    d["reasons"] = (d.get("reasons") or []) + ["F:chain:1 周目で深掘りが加わったブランチの最後の全体レビュー"]
+    json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)' "$out/scope.json" "$out/escalation.json" 2>> "$status" ||
+    echo "WARN: 最後の全体レビューの深掘りを escalation.json に書けなかった" >> "$status"
+fi
 # 秘密情報のファイルが差分にあれば、外部モデル（Codex）を起動しない（エージェントの --no-codex に頼らない）。
 # 判定できない（escalation.json が無い・読めない）ときも起動しない（止める側に倒す）
 if [ $use_codex -eq 1 ]; then

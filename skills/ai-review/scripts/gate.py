@@ -533,6 +533,9 @@ def cmd_plan(a):
     else:
         out.update({"scope": "incremental", "since": prev["head_sha"],
                     "why": "前回レビューした %s からの差分だけを見る" % prev["head_sha"][:7]})
+    # 1 周目で深掘りが加わったブランチは、2 回目以降の全体レビュー（最後の全体）でも深掘りを加える。
+    # 差分レビューの周は、その周の差分の昇格判定に任せる
+    out["force_escalation"] = bool(chained and out["scope"] == "full" and prev.get("chain_escalated") is True)
     print(json.dumps(out, ensure_ascii=False))
 
 
@@ -576,6 +579,10 @@ def cmd_record(a):
             size_skipped = False
         if size_skipped and not chained:
             die("規模による昇格を飛ばした run ですが、前回の記録とつながりません（規模の判定は 1 周目に要る）")
+        if (scope["scope"] == "full" and chained and prev.get("chain_escalated") is True
+                and a.escalate != "true"):
+            die("1 周目で深掘りが加わったブランチの全体レビューです。own-security を回し、--escalate true で記録してください"
+                "（ユーザーが明示した場合だけ --skipped-by-user true）")
     given = a.verdict
     floor = s["floor"] if s else "pass"
     if a.no_diff:
@@ -680,6 +687,7 @@ def cmd_record(a):
         rec["chain_base"] = a.merge_base
         base_count = prev["full_count"] if chained else 0
         rec["full_count"] = base_count + (1 if rec["scope"] == "full" else 0)
+        rec["chain_escalated"] = (prev.get("chain_escalated") is True) if chained else (a.escalate == "true")
         if rec["scope"] == "incremental":
             rec["since_sha"] = scope.get("since")
     elif a.no_diff:
