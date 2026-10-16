@@ -387,10 +387,10 @@ d = json.load(open(sys.argv[1], encoding="utf-8")); f = json.load(open(sys.argv[
 sp = list(dict.fromkeys((d.get("secret_paths") or []) + (f.get("secret_paths") or [])))
 d["secret_paths"] = sp
 json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False)' "$out/escalation.json" "$out/escalation-full.json" 2>> "$status" ||
-      { echo "WARN: ブランチ全体の秘密情報の判定を足せなかった（Codex を起動しない）" >> "$status"
+      { echo "WARN: ブランチ全体の秘密情報の判定を足せなかった（Codex を起動しない）" >> "$status"; secret_full_failed=1
         "$py" -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["secret_paths"]="?"; json.dump(d, open(p,"w"))' "$out/escalation.json"; }
   else
-    echo "WARN: ブランチ全体の秘密情報の判定が失敗した（Codex を起動しない）" >> "$status"
+    echo "WARN: ブランチ全体の秘密情報の判定が失敗した（Codex を起動しない）" >> "$status"; secret_full_failed=1
     "$py" -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["secret_paths"]="?"; json.dump(d, open(p,"w"))' "$out/escalation.json"
   fi
 fi
@@ -408,6 +408,10 @@ if sc.get("force_escalation") is True:
 fi
 # 秘密情報のファイルが差分にあれば、外部モデル（Codex）を起動しない（エージェントの --no-codex に頼らない）。
 # 判定できない（escalation.json が無い・読めない）ときも起動しない（止める側に倒す）
+# ブランチ全体の秘密情報を判定できなかったら、escalation.json を書き換えられたかに頼らず、ここで Codex を止める
+if [ "${secret_full_failed:-0}" = "1" ]; then
+  use_codex=0; codex_off="ブランチ全体の秘密情報を判定できない"
+fi
 if [ $use_codex -eq 1 ]; then
   n_secret="$("$py" -I -c 'import json,sys
 d = json.load(open(sys.argv[1], encoding="utf-8", errors="replace"))

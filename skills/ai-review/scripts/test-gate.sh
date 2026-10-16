@@ -742,6 +742,35 @@ rm -rf .ai-review
 # T8: 混み合いの判定は pipefail の下でも正しく真になる
 grep -q "grep -qE '^(ERROR|error)" "$RR" && ng "tail | grep -q のまま（T8）" || ok "混み合いの判定で grep -q をパイプの後ろに置かない（T8）"
 
+echo "13g. 差分レビューの穴（4 回目の /ai-review の指摘 U1〜U4）"
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# U1: fixed で引き継ぐ項目にも今の高リスクの決まりを当て、高リスクなら全体で確かめる
+G checkout -q -b g1 origin/main
+mkdir -p hq; echo 1 > hq/a.js; echo 2 > g9.js; G add hq/a.js g9.js; G commit -qm big
+run --out .review-reports/u1a; rec13 .review-reports/u1a --verdict must-address --items "$(mk L1 hq/a.js MUST-ADDRESS correctness l false u1)" >/dev/null 2>&1
+bash "$RI" --id L1 --fixed --note n >/dev/null 2>&1
+printf 'max_files 1\npath ^hq/\n' > .ai-review/escalation-rules.local.txt
+echo 3 >> hq/a.js; G commit -qam u1b
+run --out .review-reports/u1b
+[ "$(sget .review-reports/u1b/scope.json scope)" = "full" ] && ok "後から高リスクになった fixed の次は全体レビュー（U1）" || ng "U1: $(cat .review-reports/u1b/scope.json)"
+printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# U2: 予備の処理が失敗しても Codex を止める
+grep -q 'secret_full_failed=1' "$RR" && grep -q 'secret_full_failed' "$RR" && ok "ブランチ全体の秘密情報の判定に失敗したら、シェルの側で Codex を止める（U2）" || ng "U2: 止める処理が無い"
+# U3: 同じ HEAD の全体レビューの run を記録し直せる（深掘りを後から済ませた場合）
+G checkout -q -b g3 origin/main
+echo 1 > g31.js; echo 2 > g32.js; G add g31.js g32.js; G commit -qm big
+run --out .review-reports/u3a; rec13 .review-reports/u3a --verdict pass >/dev/null 2>&1
+echo 3 >> g31.js; G commit -qam u3b
+run --out .review-reports/u3b; rec13 .review-reports/u3b --verdict pass >/dev/null 2>&1
+run --out .review-reports/u3c
+[ "$(sget .review-reports/u3c/scope.json scope)" = "full" ] || ng "u3c が全体にならない: $(cat .review-reports/u3c/scope.json)"
+bash "$RG" --verdict pass --escalate true --escalation-done false --report .review-reports/u3c/report.md >/dev/null 2>&1
+run --out .review-reports/u3c --security
+bash "$RG" --verdict pass --escalate true --escalation-done true --report .review-reports/u3c/report.md >"$T/rg.out" 2>&1 && [ "$(jget full_count)" = "2" ] && ok "深掘りを後から済ませて、同じ全体レビューを記録し直せる（U3）" || ng "U3: $(cat "$T/rg.out") full_count=$(jget full_count)"
+rm -rf .ai-review
+# U4: 差分レビューの起点が違うときは、そのことを言う
+grep -q '差分レビューの起点' "$RG" && ok "差分レビューの起点が違うときのエラー文を分ける（U4）" || ng "U4: エラー文が分かれていない"
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap

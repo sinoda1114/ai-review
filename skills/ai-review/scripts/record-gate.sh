@@ -117,8 +117,13 @@ print(d.get("since") or "" if d.get("scope") == "incremental" else "")' "$report
     for f in "$report_dir"/reviewed_base.*; do
       [ -f "$f" ] || continue
       if [ "$(head -n 1 "$f")" != "$want_base" ]; then
-        echo "レビューした比較範囲の起点（$(head -c 7 "$f")、$(basename "$f")）が、$dbase との merge-base（${dmb:0:7}）と違います。" >&2
-        echo "既定の比較元（--base を付けない）で /ai-review を回し直してください。" >&2
+        if [ -n "${inc_since:-}" ]; then
+          echo "レビューした比較範囲の起点（$(head -c 7 "$f")、$(basename "$f")）が、差分レビューの起点（scope.json の since: ${inc_since:0:7}）と違います。" >&2
+          echo "レビューの後に latest.json が変わったか、run が途中で作り直されました。/ai-review を回し直してください。" >&2
+        else
+          echo "レビューした比較範囲の起点（$(head -c 7 "$f")、$(basename "$f")）が、$dbase との merge-base（${dmb:0:7}）と違います。" >&2
+          echo "既定の比較元（--base を付けない）で /ai-review を回し直してください。" >&2
+        fi
         exit 1
       fi
     done

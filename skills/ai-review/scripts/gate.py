@@ -517,13 +517,15 @@ def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
     )
 
 
-def heavy_fixed(prev):
+def heavy_fixed(prev, pats=None):
     """前回の記録で fixed にしたが、まだ再レビューしていない項目のうち、差分レビューでは確かめきれないもの:
     重い項目（BLOCK・高リスク・セキュリティ）と、差分に入らず open に戻したことがある項目（reopened）"""
     return [it for it in prev.get("must_address") or []
             if isinstance(it, dict) and it.get("status") == "fixed" and not it.get("re_reviewed_sha")
             and (it.get("tier") == "BLOCK" or it.get("high_risk") is True or it.get("category") == "security"
-                 or it.get("reopened") is True)]
+                 or it.get("reopened") is True
+                 # 今の高リスクの決まり（後から足した path ルールを含む）にも当てる
+                 or (pats is not None and high_risk_of(it, pats)[0]))]
 
 
 def cmd_plan(a):
@@ -542,7 +544,7 @@ def cmd_plan(a):
         out["why"] = "差分が小さい（max_files / max_added 以下）ので毎回全体を見る"
     elif prev.get("head_sha") == a.head:
         out["why"] = "前回と同じ HEAD"
-    elif heavy_fixed(prev):
+    elif heavy_fixed(prev, path_rules(a.rules or [])):
         # 差分レビューは「そのファイルが差分にあるか」までしか確かめられない。重い項目と、一度 open に戻した項目の
         # fixed は全体で確かめる（戻した項目は、差分レビューを続ける限り確かめられない）
         out["why"] = "BLOCK・高リスク・セキュリティ、または差分に入らなかった項目を fixed にしたので、全体で確かめる"
@@ -588,10 +590,15 @@ def cmd_record(a):
     if a.run and not a.no_diff and a.escalate != "true" and any(it["category"] == "security" for it in items):
         die("セキュリティの指摘（category=security）があります。own-security を回し、--escalate true で記録してください")
     prev = read_json(a.previous) if a.previous else {}
-    if (a.run and isinstance(prev.get("_previous"), dict) and prev.get("head_sha") == a.head
-            and prev.get("scope") == "incremental" and prev.get("since_sha") == (read_json(os.path.join(a.run, "scope.json")) or {}).get("since")):
-        # 同じ差分レビューの run を記録し直す。前回の記録は今回の結果なので、その前の記録をつなぎ先にする
-        prev = prev["_previous"]
+    same_run = bool(a.run) and bool(prev.get("report")) and \
+        os.path.realpath(os.path.dirname(prev["report"])) == os.path.realpath(a.run)
+    if same_run and isinstance(prev.get("_previous"), dict) and prev.get("head_sha") == a.head:
+        sc0 = read_json(os.path.join(a.run, "scope.json")) or {}
+        if prev.get("scope") == sc0.get("scope", "full") and (prev.get("scope") != "incremental"
+                                                             or prev.get("since_sha") == sc0.get("since")):
+            # 同じ HEAD・同じ範囲の run を記録し直す（深掘りを後から済ませたときなど）。
+            # 前回の記録は今回の結果なので、その前の記録をつなぎ先にする
+            prev = prev["_previous"]
     is_dry = bool(a.run) and os.path.exists(os.path.join(a.run, "dry-run.flag"))
     chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", is_dry)
     scope = {"scope": "full"}
@@ -609,10 +616,10 @@ def cmd_record(a):
                 size_skipped = json.load(f).get("size_skipped") is True
         except (OSError, ValueError, AttributeError):
             size_skipped = False
-        if scope["scope"] == "incremental" and heavy_fixed(prev):
+        if scope["scope"] == "incremental" and heavy_fixed(prev, path_rules(a.rules or [])):
             die("前回の記録に、差分レビューでは確かめきれない fixed（%s）があります。"
                 "run-reviews.sh --full で全体をレビューしてから記録してください"
-                % ", ".join(str(it.get("id")) for it in heavy_fixed(prev))[:200])
+                % ", ".join(str(it.get("id")) for it in heavy_fixed(prev, path_rules(a.rules or [])))[:200])
         if size_skipped and not chained:
             die("規模による昇格を飛ばした run ですが、前回の記録とつながりません（規模の判定は 1 周目に要る）")
         if (scope["scope"] == "full" and chained and prev.get("chain_escalated") is True
@@ -785,8 +792,8 @@ def cmd_record(a):
         # ダミー実行（AI_REVIEW_DRY_RUN=1）の結果。pre-push は AI_REVIEW_ALLOW_DRY=1 が無ければ拒む
         rec["dry_run"] = True
         print("[ai-review] 注意: ダミー実行の結果です。push の根拠になりません", file=sys.stderr)
-    if rec.get("scope") == "incremental" and prev:
-        # 同じ run を記録し直すときのつなぎ先（1 段だけ持つ。pre-push は先頭の値を読むので最後に置く）
+    if a.mode == "branch" and not a.no_diff:
+        # 同じ HEAD の run を記録し直すときのつなぎ先（1 段だけ持つ。前回が無ければ空。pre-push は先頭の値を読むので最後に置く）
         rec["_previous"] = {k: v for k, v in prev.items() if k != "_previous"}
     print(json.dumps(rec, ensure_ascii=False, indent=2))
     if rec["deep_recommended"]:
