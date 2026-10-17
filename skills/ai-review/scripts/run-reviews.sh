@@ -42,7 +42,7 @@
 #   AI_REVIEW_DRY_VERDICT=PASS|MUST-ADDRESS|BLOCK  自前観点のダミー出力の結論
 #   AI_REVIEW_DRY_FAIL="<名前>:capacity|mention|other,..."  そのレビュアーを初回だけ失敗させる（capacity は Codex の混み合いの
 #     エラー行を出す。mention は「at capacity」という語を含むだけの別の失敗）
-#   AI_REVIEW_DRY_FAIL_RETRY=1  回し直しも同じように失敗させる
+#   AI_REVIEW_DRY_FAIL_RETRY=1|empty  回し直しも同じように失敗させる（empty は終了コード 0・空の出力）
 set -uo pipefail
 
 CLAUDE_MODEL="claude-opus-5-5"
@@ -509,7 +509,7 @@ dry_fail_mode() {
   [ -n "$m" ] && echo "$m"
 }
 dry_fail() {
-  : > "$out/$1.md"
+  : > "$out/$1.md"; printf '%s\0' sleep 0 > "$out/$1.cmd"
   case "$(dry_fail_mode "$1")" in
     capacity) echo "ERROR: Selected model is at capacity. Please try a different model." >> "$out/$1.err" ;;
     mention) printf 'note: the docs say "at capacity" sometimes\nERROR: dry run failure\n' >> "$out/$1.err" ;;
@@ -672,6 +672,8 @@ rerun_one() {
   local n="$1" why="$2" rp re=0 rc=0
   if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && [ "${AI_REVIEW_DRY_FAIL_RETRY:-0}" = "1" ] && dry_fail_mode "$n" >/dev/null; then
     ( dry_fail "$n" ) &
+  elif [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && [ "${AI_REVIEW_DRY_FAIL_RETRY:-0}" = "empty" ] && dry_fail_mode "$n" >/dev/null; then
+    ( : > "$out/$n.md" ) &  # 回し直しが終了コード 0・空の出力で終わる
   elif [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && [ "${AI_REVIEW_DRY_EMPTY:-0}" != "1" ]; then
     ( dry_write "$n" ) &
   else
@@ -720,6 +722,7 @@ for n in $names; do
   tail -n 20 "$out/$n.err" 2>/dev/null | grep -E '^(ERROR|error)[: ].*Selected model is at capacity' >/dev/null || continue
   sleep "${AI_REVIEW_CAPACITY_WAIT:-60}"
   failed="$(printf ' %s ' "$failed" | sed "s/ $n / /g")"
+  capacity_retried="${capacity_retried:-} $n"  # 空出力の回し直しを重ねない（回し直しは 1 回だけ）
   rerun_one "$n" "Codex の混み合い: 待ってから単独で再実行"; rc=$?
   [ $rc -eq 2 ] && timed_out="$timed_out $n"
   [ $rc -eq 1 ] && failed="$failed $n"
@@ -730,6 +733,9 @@ done
 # 終了することがある（2026-09-11 に実測。単独実行なら同じコマンドが正常に完走する）。ここで直列に取り直す。
 for n in $names; do
   if is_timed_out "$n" || is_failed "$n"; then continue; fi
+  case " ${capacity_retried:-} " in *" $n "*)
+    # 混み合いで回し直したものが空で終わったら、もう回さずに失敗にする
+    [ -s "$out/$n.md" ] || failed="$failed $n"; continue ;; esac
   if [ ! -s "$out/$n.md" ] && [ -f "$out/$n.cmd" ]; then
     rerun_one "$n" "空出力: 並列衝突とみなし単独で再実行"; rc=$?
     [ $rc -eq 2 ] && timed_out="$timed_out $n"

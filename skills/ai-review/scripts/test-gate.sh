@@ -866,6 +866,12 @@ run --out .review-reports/x3; ( cd .review-reports/x3 && bash "$RG" --verdict mu
 ( cd .review-reports/x3 && bash "$RG" --verdict must-address --escalate false --escalation-done false --report report.md >"$T/rg.out" 2>&1 ) && ok "--report にファイル名だけでも、同じ run を記録し直せる（X3）" || ng "X3: $(cat "$T/rg.out")"
 rm -rf .ai-review
 
+echo "13k. 混み合いの回し直しは 1 回だけ（8 回目の /ai-review の指摘 Y1）"
+G checkout -q -b k1 origin/main
+echo c > k91.js; G add k91.js; G commit -qm k1
+AI_REVIEW_CAPACITY_WAIT=0 AI_REVIEW_DRY_FAIL="codex-review:capacity" AI_REVIEW_DRY_FAIL_RETRY=empty run --out .review-reports/y1
+[ "$(grep -c '^retry codex-review' .review-reports/y1/status.txt)" = "1" ] && ok "混み合いの回し直しが空の出力でも、空出力の回し直しを重ねない（Y1）" || ng "Y1: $(grep '^retry' .review-reports/y1/status.txt)"
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap

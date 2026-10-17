@@ -11,6 +11,7 @@
 #   4. escalate=true かつ escalation_done=false かつ skipped_by_user=false（昇格未実施）
 #   5. mode が branch でない（--local の記録は未コミット差分しか見ていないため push の根拠にしない）
 #   6. verdict が pass / must-address / block 以外（v2 の記録 fix を含む。再実行を求める）
+#   7. scope が incremental（差分レビュー）で、full_count（全体レビューの回数）が 2 未満（最後の全体レビューが要る）
 #
 # 項目の検査に python3 を使う（must-address のときだけ）。見つからなければ拒否する（黙って通さない）。
 #

@@ -125,6 +125,8 @@ print(d.get("since") or "" if d.get("scope") == "incremental" else "")' "$report
           exit 1
         elif [ -f "$hp/pre-push" ] && ! grep -q 'ai-review-managed-hook' "$hp/pre-push"; then
           echo "[ai-review] 注意: 効いている pre-push（$hp/pre-push）は ai-review のフックではありません。push のゲートが効いていない可能性があります" >&2
+        elif [ ! -f "$hp/pre-push" ]; then
+          echo "[ai-review] 注意: 効いている場所（$hp）に pre-push がありません。push のゲートが効いていません（SKILL.md §6）" >&2
         fi
       fi
     fi
