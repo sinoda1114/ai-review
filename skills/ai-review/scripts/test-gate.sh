@@ -771,6 +771,28 @@ rm -rf .ai-review
 # U4: 差分レビューの起点が違うときは、そのことを言う
 grep -q '差分レビューの起点' "$RG" && ok "差分レビューの起点が違うときのエラー文を分ける（U4）" || ng "U4: エラー文が分かれていない"
 
+echo "13h. 1 段前の記録（_previous）まわり（5 回目の /ai-review の指摘 V1〜V3）"
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# V1: つながらなかった記録は、記録し直しのつなぎ先にしない
+G checkout -q -b h1 origin/main
+echo 1 > o1.js; echo 2 > o2.js; G add o1.js o2.js; G commit -qm big
+run --out .review-reports/v1a; rec13 .review-reports/v1a --verdict pass >/dev/null 2>&1
+G checkout -q -b h1b origin/main
+echo 1 > o3.js; echo 2 > o4.js; G add o3.js o4.js; G commit -qm other
+run --out .review-reports/v1b; rec13 .review-reports/v1b --verdict pass >/dev/null 2>&1
+python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); p=d.get("_previous"); p=json.loads(p) if isinstance(p,str) and p else p; sys.exit(0 if not p else 1)' && ok "つながらなかった前の記録は _previous に残さない（V1）" || ng "V1: $(python3 -c 'import json; print(json.load(open(".review-reports/latest.json")).get("_previous"))' | head -c 200)"
+# V2: _previous の中のキーを pre-push が拾わない
+G checkout -q -b h2 origin/main
+echo 1 > o5.js; echo 2 > o6.js; G add o5.js o6.js; G commit -qm big
+run --out .review-reports/v2a; rec13 .review-reports/v2a --verdict pass >/dev/null 2>&1
+echo 3 >> o5.js; G commit -qam v2b
+run --out .review-reports/v2b; rec13 .review-reports/v2b --verdict pass >/dev/null 2>&1
+python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); sys.exit(0 if isinstance(d.get("_previous"), str) and json.loads(d["_previous"]).get("head_sha") else 1)' && ok "_previous は JSON の文字列で持つ（入れ子のキーを pre-push の grep が拾わない）（V2）" || ng "V2: $(python3 -c 'import json; print(type(json.load(open(".review-reports/latest.json")).get("_previous")))')"
+! grep -q '^    "dry_run"\|^  "_previous": {' .review-reports/latest.json && ok "記録の入れ子に dry_run のキーが出ない（V2）" || ng "V2: 入れ子のキー"
+# V3: サブディレクトリから相対パスで記録しても、同じ run だと分かる
+mkdir -p sub; ( cd sub && bash "$RG" --verdict pass --escalate false --escalation-done false --report ../.review-reports/v2b/report.md >"$T/rg.out" 2>&1 ) && ok "サブディレクトリから相対パスで同じ run を記録し直せる（V3）" || ng "V3: $(cat "$T/rg.out")"
+rm -rf .ai-review sub
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap

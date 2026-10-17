@@ -590,15 +590,22 @@ def cmd_record(a):
     if a.run and not a.no_diff and a.escalate != "true" and any(it["category"] == "security" for it in items):
         die("セキュリティの指摘（category=security）があります。own-security を回し、--escalate true で記録してください")
     prev = read_json(a.previous) if a.previous else {}
+    # 同じ run か: run ディレクトリの名前（run-<時刻>）で比べる（--report が相対パスでも、どこから記録しても同じになる）
     same_run = bool(a.run) and bool(prev.get("report")) and \
-        os.path.realpath(os.path.dirname(prev["report"])) == os.path.realpath(a.run)
-    if same_run and isinstance(prev.get("_previous"), dict) and prev.get("head_sha") == a.head:
+        os.path.basename(os.path.dirname(os.path.normpath(prev["report"]))) == os.path.basename(os.path.normpath(a.run))
+    prev_prev = prev.get("_previous")
+    if isinstance(prev_prev, str):
+        try:
+            prev_prev = json.loads(prev_prev) if prev_prev else {}
+        except ValueError:
+            prev_prev = None
+    if same_run and isinstance(prev_prev, dict) and prev.get("head_sha") == a.head:
         sc0 = read_json(os.path.join(a.run, "scope.json")) or {}
         if prev.get("scope") == sc0.get("scope", "full") and (prev.get("scope") != "incremental"
                                                              or prev.get("since_sha") == sc0.get("since")):
             # 同じ HEAD・同じ範囲の run を記録し直す（深掘りを後から済ませたときなど）。
             # 前回の記録は今回の結果なので、その前の記録をつなぎ先にする
-            prev = prev["_previous"]
+            prev = prev_prev
     is_dry = bool(a.run) and os.path.exists(os.path.join(a.run, "dry-run.flag"))
     chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", is_dry)
     scope = {"scope": "full"}
@@ -793,8 +800,9 @@ def cmd_record(a):
         rec["dry_run"] = True
         print("[ai-review] 注意: ダミー実行の結果です。push の根拠になりません", file=sys.stderr)
     if a.mode == "branch" and not a.no_diff:
-        # 同じ HEAD の run を記録し直すときのつなぎ先（1 段だけ持つ。前回が無ければ空。pre-push は先頭の値を読むので最後に置く）
-        rec["_previous"] = {k: v for k, v in prev.items() if k != "_previous"}
+        # 同じ HEAD の run を記録し直すときのつなぎ先（1 段だけ）。前の記録とつながったときだけ残す（つながらなければ空）。
+        # JSON の文字列で持つ（pre-push はファイル全体を grep するので、入れ子の dry_run などのキーを拾わせない）
+        rec["_previous"] = json.dumps({k: v for k, v in prev.items() if k != "_previous"}, ensure_ascii=False) if chained else ""
     print(json.dumps(rec, ensure_ascii=False, indent=2))
     if rec["deep_recommended"]:
         print(safe("[ai-review] --deep を推奨: " + " / ".join(rec["deep_recommend_reasons"])), file=sys.stderr)
