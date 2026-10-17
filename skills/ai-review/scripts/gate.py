@@ -593,8 +593,9 @@ def cmd_record(a):
         die("セキュリティの指摘（category=security）があります。own-security を回し、--escalate true で記録してください")
     prev = read_json(a.previous) if a.previous else {}
     # 同じ run か: run ディレクトリの名前（run-<時刻>）で比べる（--report が相対パスでも、どこから記録しても同じになる）
-    same_run = bool(a.run) and bool(prev.get("report")) and \
-        os.path.basename(os.path.dirname(os.path.normpath(prev["report"]))) == os.path.basename(os.path.normpath(a.run))
+    run_name = os.path.basename(os.path.normpath(os.path.abspath(a.run))) if a.run else ""
+    prev_run = prev.get("run") or os.path.basename(os.path.dirname(os.path.normpath(prev.get("report") or "")))
+    same_run = bool(run_name) and prev_run == run_name
     if same_run:
         # 同じ出力先で run-reviews.sh を回し直したなら、記録し直しではない（レビュー済みの印が前の記録より新しい）
         try:
@@ -652,17 +653,6 @@ def cmd_record(a):
         s = None
         if items:
             die("--no-diff の記録に項目は付けられません")
-
-    # 記録し直しでは、同じ ID の項目に付けた処理（fixed・accepted・検証・承認）を引き継ぐ
-    if replaced:
-        done = {str(it.get("id")): it for it in replaced.get("must_address") or []
-                if isinstance(it, dict) and it.get("status") in ("fixed", "accepted")}
-        keep = ("status", "history", "reason", "verifier", "verifier_note", "approved_by", "approval_note",
-                "fixed_at", "fixed_note")
-        for it in items:
-            old = done.get(str(it["id"]))
-            if old and old.get("file") == it.get("file") and old.get("summary") == it.get("summary"):
-                it.update({k: old[k] for k in keep if k in old})
 
     # 自動で足す項目（判定表の欠け・結論を読めない出力）
     if s:
@@ -774,6 +764,17 @@ def cmd_record(a):
     if carried:
         level = max([level] + [TIER_LEVEL.get(it.get("tier"), 1) for it in carried])
         verdict = [k for k, v in LEVEL.items() if v == level][0]
+    # 記録し直しでは、同じ項目（新しい項目・自動の項目・引き継ぎ・再レビュー済み）に付けた処理
+    # （fixed・accepted・検証・承認）を引き継ぐ。照合は ID・file・summary がすべて同じこと
+    if replaced:
+        done = {str(it.get("id")): it for it in replaced.get("must_address") or []
+                if isinstance(it, dict) and it.get("status") in ("fixed", "accepted")}
+        keep = ("status", "history", "reason", "verifier", "verifier_note", "approved_by", "approval_note",
+                "fixed_at", "fixed_note")
+        for it in items + carried + prev_fixed:
+            old = done.get(str(it.get("id")))
+            if old and old.get("file") == it.get("file") and old.get("summary") == it.get("summary"):
+                it.update({k: old[k] for k in keep if k in old})
     if verdict == "must-address" and not items and not carried:
         die("結論が must-address ですが項目がありません")
 
@@ -792,6 +793,7 @@ def cmd_record(a):
         "skipped_by_user": a.skipped_by_user == "true",
         "reason": a.reason or "",
         "report": a.report or "",
+        "run": os.path.basename(os.path.normpath(os.path.abspath(a.run))) if a.run else "",
         "recorded_at": now(),
         "sources": (s["sources"] if s else {}),
         "must_address": items + carried + prev_fixed,

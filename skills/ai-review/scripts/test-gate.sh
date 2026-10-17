@@ -833,13 +833,37 @@ echo 1 > a97.js; echo 2 > a98.js; G add a97.js a98.js; G commit -qm big
 run --out .review-reports/w3a; rec13 .review-reports/w3a --verdict pass >/dev/null 2>&1
 echo 3 >> a97.js; G commit -qam w3b
 run --out .review-reports/w3b
-mkdir -p "$T/oldhooks"; printf '#!/bin/sh\n# 古いフック\nexit 0\n' > "$T/oldhooks/pre-push"; chmod +x "$T/oldhooks/pre-push"
+mkdir -p "$T/oldhooks"; printf '#!/bin/sh\n# ai-review-managed-hook\n# 古いフック（全体レビューの回数を見ない）\nexit 0\n' > "$T/oldhooks/pre-push"; chmod +x "$T/oldhooks/pre-push"
 git config core.hooksPath "$T/oldhooks"
 rec13 .review-reports/w3b --verdict pass && ng "古い pre-push のまま差分レビューを記録した（W3）" || ok "古い pre-push では差分レビューを記録しない（W3）"
 grep -q 'pre-push' "$T/rg.out" && ok "pre-push の入れ替えを案内する（W3）" || ng "W3 の案内: $(cat "$T/rg.out")"
 cp "$HOOK" "$T/oldhooks/pre-push"
 rec13 .review-reports/w3b --verdict pass && ok "対応した pre-push なら記録できる（W3）" || ng "W3（新しいフック）: $(cat "$T/rg.out")"
 git config --unset core.hooksPath
+rm -rf .ai-review
+
+echo "13j. 7 回目の /ai-review の指摘 X1〜X3"
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# X1: 記録し直しでも、引き継いだ項目に付けた処理を残す
+G checkout -q -b j1 origin/main
+echo 1 > b11.js; echo 2 > b12.js; G add b11.js b12.js; G commit -qm big
+run --out .review-reports/x1a; rec13 .review-reports/x1a --verdict must-address --items "$(mk C1 b11.js MUST-ADDRESS correctness c false x1)" >/dev/null 2>&1
+echo 3 >> b12.js; G commit -qam x1b
+run --out .review-reports/x1b; rec13 .review-reports/x1b --verdict must-address >/dev/null 2>&1
+bash "$RI" --id carry-C1 --accepted --reason "b12.js で弾いている" >/dev/null 2>&1
+rec13 .review-reports/x1b --verdict must-address >/dev/null 2>&1
+case " $(ids) " in *" carry-C1:accepted "*) ok "記録し直しでも、引き継いだ項目の accepted を残す（X1）" ;; *) ng "X1: $(ids)" ;; esac
+# X2: ai-review 以外のフックは「古い ai-review のフック」と取り違えない
+echo 4 >> b12.js; G commit -qam x2
+run --out .review-reports/x2
+mkdir -p "$T/huskyhooks"; printf '#!/bin/sh\n. "$(dirname "$0")/_/husky.sh"\nnpx lint-staged\n' > "$T/huskyhooks/pre-push"
+git config core.hooksPath "$T/huskyhooks"
+rec13 .review-reports/x2 --verdict must-address && ok "ai-review 以外のフックなら、差分レビューの記録を拒まない（X2）" || ng "X2: $(cat "$T/rg.out")"
+git config --unset core.hooksPath
+# X3: --report にファイル名だけを渡しても、同じ run だと分かる
+echo 5 >> b12.js; G commit -qam x3
+run --out .review-reports/x3; ( cd .review-reports/x3 && bash "$RG" --verdict must-address --escalate false --escalation-done false --report report.md >"$T/rg.out" 2>&1 ) || ng "x3 の 1 回目: $(cat "$T/rg.out")"
+( cd .review-reports/x3 && bash "$RG" --verdict must-address --escalate false --escalation-done false --report report.md >"$T/rg.out" 2>&1 ) && ok "--report にファイル名だけでも、同じ run を記録し直せる（X3）" || ng "X3: $(cat "$T/rg.out")"
 rm -rf .ai-review
 
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"

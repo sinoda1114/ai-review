@@ -119,10 +119,12 @@ print(d.get("since") or "" if d.get("scope") == "incremental" else "")' "$report
         hp="$(git config --get core.hooksPath 2>/dev/null || true)"
         [ -n "$hp" ] || hp="$(git rev-parse --git-path hooks 2>/dev/null)"
         case "$hp" in "~/"*) hp="$HOME/${hp#\~/}" ;; esac
-        if [ -f "$hp/pre-push" ] && ! grep -q 'full_count' "$hp/pre-push"; then
-          echo "効いている pre-push（$hp/pre-push）が古く、差分レビューの記録を正しく検査できません。" >&2
+        if [ -f "$hp/pre-push" ] && grep -q 'ai-review-managed-hook' "$hp/pre-push" && ! grep -q 'full_count' "$hp/pre-push"; then
+          echo "効いている pre-push（$hp/pre-push）が古い ai-review のフックで、差分レビューの記録を正しく検査できません。" >&2
           echo "スキルの hooks/pre-push に入れ替えてから記録し直してください（SKILL.md §6）。" >&2
           exit 1
+        elif [ -f "$hp/pre-push" ] && ! grep -q 'ai-review-managed-hook' "$hp/pre-push"; then
+          echo "[ai-review] 注意: 効いている pre-push（$hp/pre-push）は ai-review のフックではありません。push のゲートが効いていない可能性があります" >&2
         fi
       fi
     fi
