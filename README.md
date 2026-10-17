@@ -76,7 +76,10 @@ clone する場所は `~/.claude/skills/` の外にしてください（`~/.clau
 /ai-review            # origin/HEAD から HEAD までのコミット済み差分をレビューする（push 前のゲート）
 /ai-review --local    # 未コミットの変更をレビューする（途中の確認。ゲートにはならない）
 /ai-review --deep     # 強化版。レビュアーを 5 本にする
+/ai-review --full     # 差分レビューにせず、必ずブランチ全体を見る
 ```
+
+- 大きいブランチ（既定で 20 ファイルか 1,000 行を超える）では、2 周目以降は前回レビューした時点からの差分だけを見て、項目が片づいたら最後に 1 回だけ全体を見ます。直すたびに全体を見直して周回が延びるのを防ぐためです（[`DESIGN-v3.md`](skills/ai-review/DESIGN-v3.md) §10）。
 
 - 各リポジトリで初回だけ `git remote set-head origin -a` が必要です。
 - 高リスクの項目を「直さない」と決めたときは、ユーザー自身が端末で `resolve-item.sh --id <ID> --approve-human` を実行して承認します（AI は代行しません）。
