@@ -811,7 +811,8 @@ def cmd_record(a):
         # （ブランチ全体を深掘りしたので、規模の懸念も見ている）。ダミー実行の判定は規模を見ないので済んだ扱いにする
         # （実際の判定は AI_REVIEW_DRY_ESCALATION=real で試す）
         size_esc = isinstance(esc, dict) and any(str(r).startswith(("C:", "F:size")) for r in esc.get("reasons") or [])
-        full_deep = rec["scope"] == "full" and a.escalation_done == "true"
+        # ユーザーが明示して深掘りを飛ばした全体レビューも「済んだ」扱いにする（求め続けると、毎周全体と深掘りの要求になる）
+        full_deep = rec["scope"] == "full" and (a.escalation_done == "true" or a.skipped_by_user == "true")
         dry_esc = isinstance(esc, dict) and esc.get("dry_run") is True
         rec["chain_size_escalated"] = bool((prev.get("chain_size_escalated") is True and chained)
                                            or (size_esc and a.escalation_done == "true" and rec["scope"] == "full") or full_deep or dry_esc)

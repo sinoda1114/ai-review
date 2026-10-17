@@ -872,6 +872,32 @@ echo c > k91.js; G add k91.js; G commit -qm k1
 AI_REVIEW_CAPACITY_WAIT=0 AI_REVIEW_DRY_FAIL="codex-review:capacity" AI_REVIEW_DRY_FAIL_RETRY=empty run --out .review-reports/y1
 [ "$(grep -c '^retry codex-review' .review-reports/y1/status.txt)" = "1" ] && ok "混み合いの回し直しが空の出力でも、空出力の回し直しを重ねない（Y1）" || ng "Y1: $(grep '^retry' .review-reports/y1/status.txt)"
 
+echo "13l. 9 回目の /ai-review の指摘 Z1・Z2"
+mkdir -p .ai-review
+# Z1: 規模の深掘りをユーザーが飛ばしたら、次の周から求め続けない
+G checkout -q -b l1 origin/main
+echo 1 > l11.js; G add l11.js; G commit -qm small
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/z1a; rec13 .review-reports/z1a --verdict pass >/dev/null 2>&1
+printf 'max_files 2\n' > .ai-review/escalation-rules.local.txt
+echo 2 > l12.js; echo 3 > l13.js; G add l12.js l13.js; G commit -qm grow
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/z1b
+bash "$RG" --verdict pass --escalate true --escalation-done false --skipped-by-user true --reason "ユーザーが規模の深掘りを飛ばす" --report .review-reports/z1b/report.md >"$T/rg.out" 2>&1 || ng "z1b の記録: $(cat "$T/rg.out")"
+echo 4 >> l12.js; G commit -qam z1c
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/z1c
+[ "$(sget .review-reports/z1c/scope.json force_reason)" != "size" ] && ok "ユーザーが飛ばした規模の深掘りは、次の周から求め続けない（Z1）" || ng "Z1: $(cat .review-reports/z1c/scope.json)"
+# Z2: 実行権の無い pre-push は、効いているフックとして扱わない
+printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+G checkout -q -b l2 origin/main
+echo 1 > l21.js; echo 2 > l22.js; G add l21.js l22.js; G commit -qm big
+run --out .review-reports/z2a; rec13 .review-reports/z2a --verdict pass >/dev/null 2>&1
+echo 3 >> l21.js; G commit -qam z2b
+run --out .review-reports/z2b
+mkdir -p "$T/noexec"; cp "$HOOK" "$T/noexec/pre-push"; chmod -x "$T/noexec/pre-push"
+git config core.hooksPath "$T/noexec"
+rec13 .review-reports/z2b --verdict pass; grep -q '実行権' "$T/rg.out" && ok "実行権の無い pre-push はゲートが効いていないと注意する（Z2）" || ng "Z2: $(cat "$T/rg.out")"
+git config --unset core.hooksPath
+rm -rf .ai-review
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap
