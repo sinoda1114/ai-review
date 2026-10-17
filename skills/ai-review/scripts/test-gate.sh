@@ -916,6 +916,32 @@ G checkout -q -- m11.js
 # AA3: pre-push の案内は、未処理の項目があれば先に片づけるように言う
 grep -q '未処理の項目があれば' "$HOOK" && ok "差分レビューの拒否の案内に、未処理の項目を先に片づけることを書く（AA3）" || ng "AA3: 案内が直っていない"
 
+echo "13n. 11 回目の /ai-review の指摘 BB1・BB2"
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# BB1: 差分レビューの途中で --local を記録しても、次の branch のレビューはチェーンにつながる
+G checkout -q -b n1 origin/main
+echo 1 > n91.js; echo 2 > n92.js; G add n91.js n92.js; G commit -qm big
+run --out .review-reports/bb1a; rec13 .review-reports/bb1a --verdict pass >/dev/null 2>&1
+echo 3 >> n91.js
+run --out .review-reports/bb1l --local
+bash "$RG" --verdict pass --escalate false --escalation-done false --report .review-reports/bb1l/report.md --mode local >"$T/rg.out" 2>&1 || ng "bb1l の記録: $(cat "$T/rg.out")"
+G commit -qam bb1b
+run --out .review-reports/bb1b
+[ "$(sget .review-reports/bb1b/scope.json scope)" = "incremental" ] && ok "--local の記録を挟んでも、次の branch のレビューは差分レビューにつながる（BB1）" || ng "BB1: $(cat .review-reports/bb1b/scope.json)"
+rec13 .review-reports/bb1b --verdict pass >"$T/rg.out" 2>&1 && [ "$(jget full_count)" = "1" ] && ok "full_count も数え直さない（BB1）" || ng "BB1 の記録: $(cat "$T/rg.out") full_count=$(jget full_count)"
+# BB2: つながっていない記録を記録し直しても、prev- の項目を残す
+G checkout -q -b n2 origin/main
+echo 1 > n93.js; echo 2 > n94.js; G add n93.js n94.js; G commit -qm big
+run --out .review-reports/bb2a
+bash "$RG" --verdict must-address --items "$(mk F1 n93.js MUST-ADDRESS correctness f false bb2)" --escalate true --escalation-done false --report .review-reports/bb2a/report.md >/dev/null 2>&1  # 深掘りを済ませていない（次とつながらない）記録
+bash "$RI" --id F1 --fixed --note n >/dev/null 2>&1
+echo 3 >> n93.js; G commit -qam bb2b
+run --out .review-reports/bb2b --full; rec13 .review-reports/bb2b --verdict pass >/dev/null 2>&1
+case " $(ids) " in *" prev-F1:fixed "*) : ;; *) ng "bb2b の前提: $(ids)" ;; esac
+rec13 .review-reports/bb2b --verdict pass >/dev/null 2>&1
+case " $(ids) " in *" prev-F1:fixed "*) ok "記録し直しても prev- の項目を残す（BB2）" ;; *) ng "BB2: $(ids)" ;; esac
+rm -rf .ai-review
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap

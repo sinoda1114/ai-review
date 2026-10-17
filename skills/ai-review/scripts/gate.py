@@ -519,6 +519,25 @@ def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
     )
 
 
+def is_ancestor(sha, head):
+    """sha が head の祖先か（git で確かめる）。つなぎ先を差し替えたとき、シェルが確かめた値の代わりに使う"""
+    if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha)):
+        return False
+    import subprocess
+    return subprocess.run(["git", "merge-base", "--is-ancestor", sha, head], capture_output=True).returncode == 0
+
+
+def branch_record(prev):
+    """--local の記録が持っている、直前の branch の記録（差分レビューのチェーンを --local で切らないため）"""
+    if prev.get("mode") != "local" or not isinstance(prev.get("_branch_record"), str) or not prev["_branch_record"]:
+        return None
+    try:
+        d = json.loads(prev["_branch_record"])
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) else None
+
+
 def heavy_fixed(prev, pats=None):
     """前回の記録で fixed にしたが、まだ再レビューしていない項目のうち、差分レビューでは確かめきれないもの:
     重い項目（BLOCK・高リスク・セキュリティ）と、差分に入らず open に戻したことがある項目（reopened）"""
@@ -533,7 +552,11 @@ def heavy_fixed(prev, pats=None):
 def cmd_plan(a):
     prev = read_json(a.latest)
     # 祖先の確認はシェルが sed で読んだ値で行っているので、JSON の値と同じときだけつなぐ
-    chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true" and prev.get("head_sha") == a.prev_head, a.dry)
+    anc = a.prev_ancestor == "true" and prev.get("head_sha") == a.prev_head
+    if branch_record(prev) is not None:  # 直近が --local の記録なら、その前の branch の記録につなぐ
+        prev = branch_record(prev)
+        anc = is_ancestor(prev.get("head_sha"), a.head)
+    chained = chain_continues(prev, a.branch, a.merge_base, anc, a.dry)
     lim = size_limits(a.rules)
     large = a.files > lim.get("max_files", 10 ** 9) or a.added > lim.get("max_added", 10 ** 9)
     clean = chained and not unresolved(prev, prev.get("head_sha")) and prev.get("verdict") in ("pass", "must-address")
@@ -594,6 +617,11 @@ def cmd_record(a):
     if a.run and not a.no_diff and a.escalate != "true" and any(it["category"] == "security" for it in items):
         die("セキュリティの指摘（category=security）があります。own-security を回し、--escalate true で記録してください")
     prev = read_json(a.previous) if a.previous else {}
+    prev_anc = a.prev_ancestor == "true"
+    local_prev = prev if prev.get("mode") == "local" else None
+    if a.mode == "branch" and branch_record(prev) is not None:
+        prev = branch_record(prev)
+        prev_anc = is_ancestor(prev.get("head_sha"), a.head)
     # 同じ run か: run ディレクトリの名前（run-<時刻>）で比べる（--report が相対パスでも、どこから記録しても同じになる）
     run_name = os.path.basename(os.path.normpath(os.path.abspath(a.run))) if a.run else ""
     prev_run = prev.get("run") or os.path.basename(os.path.dirname(os.path.normpath(prev.get("report") or "")))
@@ -621,8 +649,9 @@ def cmd_record(a):
             # 前回の記録は今回の結果なので、その前の記録をつなぎ先にする
             replaced = prev  # 記録し直す前の記録（その間に付けた項目の処理を引き継ぐ）
             prev = prev_prev
+            prev_anc = is_ancestor(prev.get("head_sha"), a.head)  # 差し替えたつなぎ先は git で確かめ直す
     is_dry = bool(a.run) and os.path.exists(os.path.join(a.run, "dry-run.flag"))
-    chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", is_dry)
+    chained = chain_continues(prev, a.branch, a.merge_base, prev_anc, is_dry)
     scope = {"scope": "full"}
     # チェーン（差分レビュー・最後の全体）の検査は branch の記録だけ。--local は途中の確認で push の根拠にしない
     if a.run and not a.no_diff and a.mode == "branch":
@@ -832,7 +861,13 @@ def cmd_record(a):
     if a.mode == "branch" and not a.no_diff:
         # 同じ HEAD の run を記録し直すときのつなぎ先（1 段だけ）。前の記録とつながったときだけ残す（つながらなければ空）。
         # JSON の文字列で持つ（pre-push はファイル全体を grep するので、入れ子の dry_run などのキーを拾わせない）
-        rec["_previous"] = json.dumps({k: v for k, v in prev.items() if k != "_previous"}, ensure_ascii=False) if chained else ""
+        # 同じブランチの前の記録なら残す（記録し直しのときに、祖先かを git で確かめ直してからつなぐ）
+        rec["_previous"] = (json.dumps({k: v for k, v in prev.items() if k != "_previous"}, ensure_ascii=False)
+                            if prev.get("branch") == a.branch and prev.get("mode") == "branch" else "")
+    if a.mode == "local":
+        # 直前の branch の記録を持っておく（次の branch のレビューが、--local を挟んでも差分レビューのチェーンにつながる）
+        b = (local_prev and branch_record(local_prev)) or (prev if prev.get("mode") == "branch" else None)
+        rec["_branch_record"] = json.dumps({k: v for k, v in b.items() if k != "_previous"}, ensure_ascii=False) if b else ""
     print(json.dumps(rec, ensure_ascii=False, indent=2))
     if rec["deep_recommended"]:
         print(safe("[ai-review] --deep を推奨: " + " / ".join(rec["deep_recommend_reasons"])), file=sys.stderr)
