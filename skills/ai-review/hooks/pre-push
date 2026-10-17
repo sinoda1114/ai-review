@@ -108,7 +108,8 @@ scope="$(get scope)"; full_count="$(get full_count)"
 if [ "$scope" = "incremental" ]; then
   case "$full_count" in ''|*[!0-9]*) full_count=0 ;; esac
   if [ "$full_count" -lt 2 ]; then
-    echo "[ai-review] 拒否: 直近の記録は差分レビューです。push の前に最後の全体レビューが要ります。/ai-review を再実行してください（自動で全体を見ます）" >&2
+    echo "[ai-review] 拒否: 直近の記録は差分レビューです。push の前に最後の全体レビューが要ります。" >&2
+    echo "  未処理の項目があれば、先に片づけてください（resolve-item.sh --list）。片づいていれば、/ai-review の再実行で自動で全体を見ます" >&2
     exit 1
   fi
 fi

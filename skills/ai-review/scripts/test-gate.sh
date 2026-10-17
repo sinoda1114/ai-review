@@ -898,6 +898,24 @@ rec13 .review-reports/z2b --verdict pass; grep -q '実行権' "$T/rg.out" && ok 
 git config --unset core.hooksPath
 rm -rf .ai-review
 
+echo "13m. 10 回目の /ai-review の指摘 AA1〜AA3"
+# AA1: 小さいブランチでは、2 周目以降の全体レビューに深掘りを強制しない
+G checkout -q -b m1 origin/main
+echo 1 > m11.js; G add m11.js; G commit -qm small
+run --out .review-reports/aa1a; run --out .review-reports/aa1a --security
+bash "$RG" --verdict pass --escalate true --escalation-done true --report .review-reports/aa1a/report.md >"$T/rg.out" 2>&1 || ng "aa1a の記録: $(cat "$T/rg.out")"
+echo 2 >> m11.js; G commit -qam aa1b
+run --out .review-reports/aa1b
+[ "$(sget .review-reports/aa1b/scope.json force_escalation)" = "false" ] && ok "小さいブランチの 2 周目の全体レビューには深掘りを強制しない（AA1）" || ng "AA1: $(cat .review-reports/aa1b/scope.json)"
+rec13 .review-reports/aa1b --verdict pass && ok "その周は深掘りなしで記録できる（AA1）" || ng "AA1 の記録: $(cat "$T/rg.out")"
+# AA2: --local の記録はチェーンの検査に入れない
+echo 3 >> m11.js
+run --out .review-reports/aa2 --local
+bash "$RG" --verdict pass --escalate false --escalation-done false --report .review-reports/aa2/report.md --mode local >"$T/rg.out" 2>&1 && ok "--local の記録は、深掘りが要る全体レビューとして拒まない（AA2）" || ng "AA2: $(cat "$T/rg.out")"
+G checkout -q -- m11.js
+# AA3: pre-push の案内は、未処理の項目があれば先に片づけるように言う
+grep -q '未処理の項目があれば' "$HOOK" && ok "差分レビューの拒否の案内に、未処理の項目を先に片づけることを書く（AA3）" || ng "AA3: 案内が直っていない"
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap

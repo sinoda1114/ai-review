@@ -560,7 +560,9 @@ def cmd_plan(a):
                     "why": "前回レビューした %s からの差分だけを見る" % prev["head_sha"][:7]})
     # 1 周目で深掘りが加わったブランチは、2 回目以降の全体レビュー（最後の全体）でも深掘りを加える。
     # 差分レビューの周は、その周の差分の昇格判定に任せる
-    out["force_escalation"] = bool(chained and out["scope"] == "full" and prev.get("chain_escalated") is True)
+    # 強制するのは「差分レビューの後の全体」（最後の全体）だけ。小さいブランチは毎周全体なので、毎周強制しない
+    out["force_escalation"] = bool(chained and out["scope"] == "full" and prev.get("chain_escalated") is True
+                                   and prev.get("scope") == "incremental")
     out["force_reason"] = "chain" if out["force_escalation"] else ""
     # 差分レビューの周は規模の判定を飛ばす（no_size）。ただし、今のブランチ全体が上限を超えているのに、
     # これまでの周で規模による深掘りを一度もしていなければ、深掘りを求める（1 周目が小さかったブランチ）
@@ -622,7 +624,8 @@ def cmd_record(a):
     is_dry = bool(a.run) and os.path.exists(os.path.join(a.run, "dry-run.flag"))
     chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", is_dry)
     scope = {"scope": "full"}
-    if a.run and not a.no_diff:
+    # チェーン（差分レビュー・最後の全体）の検査は branch の記録だけ。--local は途中の確認で push の根拠にしない
+    if a.run and not a.no_diff and a.mode == "branch":
         scope = read_json(os.path.join(a.run, "scope.json")) or {"scope": "full"}
         if scope.get("scope") not in ("full", "incremental"):
             die("run ディレクトリの scope.json が不正です（scope=%r）" % scope.get("scope"))
@@ -643,6 +646,7 @@ def cmd_record(a):
         if size_skipped and not chained:
             die("規模による昇格を飛ばした run ですが、前回の記録とつながりません（規模の判定は 1 周目に要る）")
         if (scope["scope"] == "full" and chained and prev.get("chain_escalated") is True
+                and prev.get("scope") == "incremental"
                 and a.escalate != "true"):
             die("1 周目で深掘りが加わったブランチの全体レビューです。own-security を回し、--escalate true で記録してください"
                 "（ユーザーが明示した場合だけ --skipped-by-user true）")
@@ -864,7 +868,8 @@ def cmd_check(a):
     bad = unresolved(rec, a.head)
     if rec.get("scope") == "incremental" and not (
             isinstance(rec.get("full_count"), int) and rec["full_count"] >= FULL_REVIEWS_BEFORE_PUSH):
-        print("-\t-\t-\t差分レビューの記録です。push の前に最後の全体レビューが要る（/ai-review を再実行）")
+        print("-\t-\t-\t差分レビューの記録です。push の前に最後の全体レビューが要る"
+              "（未処理の項目があれば先に片づける。片づいていれば /ai-review の再実行で全体を見る）")
         sys.exit(1)
     if rec.get("verdict") == "must-address" and not (rec.get("must_address") or []):
         # pre-push と同じ基準: must-address なのに項目が無い記録は壊れている
