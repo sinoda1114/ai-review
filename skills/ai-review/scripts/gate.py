@@ -845,7 +845,9 @@ def cmd_record(a):
         # （実際の判定は AI_REVIEW_DRY_ESCALATION=real で試す）
         size_esc = isinstance(esc, dict) and any(str(r).startswith(("C:", "F:size")) for r in esc.get("reasons") or [])
         # ユーザーが明示して深掘りを飛ばした全体レビューも「済んだ」扱いにする（求め続けると、毎周全体と深掘りの要求になる）
-        full_deep = rec["scope"] == "full" and (a.escalation_done == "true" or a.skipped_by_user == "true")
+        # 飛ばした扱いにするのは、昇格を求められたうえでユーザーが飛ばしたときだけ
+        full_deep = rec["scope"] == "full" and (a.escalation_done == "true"
+                                                or (a.escalate == "true" and a.skipped_by_user == "true"))
         dry_esc = isinstance(esc, dict) and esc.get("dry_run") is True
         rec["chain_size_escalated"] = bool((prev.get("chain_size_escalated") is True and chained)
                                            or (size_esc and a.escalation_done == "true" and rec["scope"] == "full") or full_deep or dry_esc)
@@ -867,7 +869,8 @@ def cmd_record(a):
     if a.mode == "local":
         # 直前の branch の記録を持っておく（次の branch のレビューが、--local を挟んでも差分レビューのチェーンにつながる）
         b = (local_prev and branch_record(local_prev)) or (prev if prev.get("mode") == "branch" else None)
-        rec["_branch_record"] = json.dumps({k: v for k, v in b.items() if k != "_previous"}, ensure_ascii=False) if b else ""
+        # 1 段前の記録（_previous）も含めて丸ごと持つ（--local の後に、同じ branch の run を記録し直せるように）
+        rec["_branch_record"] = json.dumps(b, ensure_ascii=False) if b else ""
     print(json.dumps(rec, ensure_ascii=False, indent=2))
     if rec["deep_recommended"]:
         print(safe("[ai-review] --deep を推奨: " + " / ".join(rec["deep_recommend_reasons"])), file=sys.stderr)

@@ -942,6 +942,39 @@ rec13 .review-reports/bb2b --verdict pass >/dev/null 2>&1
 case " $(ids) " in *" prev-F1:fixed "*) ok "記録し直しても prev- の項目を残す（BB2）" ;; *) ng "BB2: $(ids)" ;; esac
 rm -rf .ai-review
 
+echo "13o. 12 回目の /ai-review の指摘 CC1〜CC3"
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# CC1: --local を挟んでも、同じ branch の run を記録し直せる
+G checkout -q -b o1 origin/main
+echo 1 > o91.js; echo 2 > o92.js; G add o91.js o92.js; G commit -qm big
+run --out .review-reports/cc1a; rec13 .review-reports/cc1a --verdict pass >/dev/null 2>&1
+echo 3 >> o91.js; G commit -qam cc1b
+run --out .review-reports/cc1b; rec13 .review-reports/cc1b --verdict pass >/dev/null 2>&1
+echo 4 >> o92.js
+run --out .review-reports/cc1l --local
+bash "$RG" --verdict pass --escalate false --escalation-done false --report .review-reports/cc1l/report.md --mode local >/dev/null 2>&1
+G checkout -q -- o92.js
+rec13 .review-reports/cc1b --verdict pass && ok "--local を挟んでも、同じ差分レビューの run を記録し直せる（CC1）" || ng "CC1: $(cat "$T/rg.out")"
+# CC2: 古い ai-review のフックは、実行権が無くても差分レビューの記録を拒む
+G checkout -q -b o2 origin/main
+echo 1 > o95.js; echo 2 > o96.js; G add o95.js o96.js; G commit -qm big
+run --out .review-reports/cc2a; rec13 .review-reports/cc2a --verdict pass >/dev/null 2>&1
+echo 3 >> o95.js; G commit -qam cc2
+run --out .review-reports/cc2
+[ "$(sget .review-reports/cc2/scope.json scope)" = "incremental" ] || ng "cc2 が差分レビューにならない: $(cat .review-reports/cc2/scope.json)"
+mkdir -p "$T/oldnoexec"; printf '#!/bin/sh\n# ai-review-managed-hook\nexit 0\n' > "$T/oldnoexec/pre-push"; chmod -x "$T/oldnoexec/pre-push"
+git config core.hooksPath "$T/oldnoexec"
+rec13 .review-reports/cc2 --verdict pass && ng "実行権の無い古いフックのまま差分レビューを記録した（CC2）" || ok "古い ai-review のフックは、実行権が無くても差分レビューの記録を拒む（CC2）"
+git config --unset core.hooksPath
+# CC3: 昇格が求められていない記録の --skipped-by-user では、規模の深掘りを済んだ扱いにしない
+G checkout -q -b o3 origin/main
+rm -f .ai-review/escalation-rules.local.txt
+echo 1 > o93.js; G add o93.js; G commit -qm small
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/cc3a
+bash "$RG" --verdict pass --escalate false --escalation-done false --skipped-by-user true --reason r --report .review-reports/cc3a/report.md >/dev/null 2>&1
+[ "$(jget chain_size_escalated)" = "false" ] && ok "昇格が求められていない記録の --skipped-by-user では、規模の深掘りを済んだ扱いにしない（CC3）" || ng "CC3: chain_size_escalated=$(jget chain_size_escalated)"
+rm -rf .ai-review
+
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main
 echo 'c' > c1.js; G add c1.js; G commit -qm cap
