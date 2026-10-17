@@ -24,6 +24,9 @@ G clone -q "$T/origin.git" "$T/repo" 2>/dev/null || die "clone"
 cd "$T/repo" || die "cd"
 echo base > a.txt; G add -A; G commit -qm base; P origin HEAD:main || die "push"
 G fetch -q origin && G remote set-head origin main >/dev/null || die "origin/HEAD の設定"
+# この端末に入っている pre-push（グローバルの core.hooksPath）に左右されないよう、テスト用のリポジトリでは今のフックを使う
+mkdir -p "$T/hooks" && cp "$HOOK" "$T/hooks/pre-push" && chmod +x "$T/hooks/pre-push"
+printf '[core]\n\thooksPath = %s\n' "$T/hooks" > "$T/gitconfig"; export GIT_CONFIG_GLOBAL="$T/gitconfig"
 G checkout -q -b feat
 mkdir -p src/auth; echo 'x' > src/app.js; echo 'y' > src/auth/login.js; G add -A; G commit -qm change
 run(){ AI_REVIEW_DRY_RUN=1 bash "$RR" "$@" >/dev/null 2>&1; }
@@ -792,6 +795,52 @@ python3 -c 'import json,sys; d=json.load(open(".review-reports/latest.json")); s
 # V3: サブディレクトリから相対パスで記録しても、同じ run だと分かる
 mkdir -p sub; ( cd sub && bash "$RG" --verdict pass --escalate false --escalation-done false --report ../.review-reports/v2b/report.md >"$T/rg.out" 2>&1 ) && ok "サブディレクトリから相対パスで同じ run を記録し直せる（V3）" || ng "V3: $(cat "$T/rg.out")"
 rm -rf .ai-review sub
+
+echo "13i. 6 回目の /ai-review の指摘 W1〜W4"
+mkdir -p .ai-review; printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+# W1: レビュアーが全部失敗した記録とはチェーンをつながない
+G checkout -q -b i1 origin/main
+echo 1 > a91.js; echo 2 > a92.js; G add a91.js a92.js; G commit -qm big
+run --out .review-reports/w1a; rec13 .review-reports/w1a --verdict pass >/dev/null 2>&1
+python3 - <<'PY'
+import json
+p = ".review-reports/latest.json"; d = json.load(open(p))
+d["sources"] = {"_none": {"level": "block", "detail": "全部未取得"}}; d["verdict"] = "block"
+json.dump(d, open(p, "w"))
+PY
+echo 3 >> a91.js; G commit -qam w1b
+run --out .review-reports/w1b
+[ "$(sget .review-reports/w1b/scope.json scope)" = "full" ] && ok "レビュアーが全部失敗した記録の次は全体レビュー（W1）" || ng "W1: $(cat .review-reports/w1b/scope.json)"
+# W2: 同じ出力先で回し直した run は、記録し直しとして扱わない
+G checkout -q -b i2 origin/main
+echo 1 > a93.js; echo 2 > a94.js; G add a93.js a94.js; G commit -qm big
+AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/w2a; run --out .review-reports/w2a --security
+bash "$RG" --verdict pass --escalate true --escalation-done true --report .review-reports/w2a/report.md >"$T/rg.out" 2>&1 || ng "w2a の記録: $(cat "$T/rg.out")"
+sleep 1; AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/w2a; run --out .review-reports/w2a --security
+grep -q '"size_skipped": *true' .review-reports/w2a/escalation.json || ng "w2a の回し直しで規模の判定を飛ばしていない: $(cat .review-reports/w2a/escalation.json)"
+bash "$RG" --verdict pass --escalate true --escalation-done true --report .review-reports/w2a/report.md >"$T/rg.out" 2>&1 && ok "同じ出力先で回し直した run も記録できる（W2）" || ng "W2: $(cat "$T/rg.out")"
+# W4: 記録し直しでも、その間に付けた処理を残す
+G checkout -q -b i4 origin/main
+echo 1 > a95.js; echo 2 > a96.js; G add a95.js a96.js; G commit -qm big
+run --out .review-reports/w4a
+rec13 .review-reports/w4a --verdict must-address --items "$(mk Q1 a95.js MUST-ADDRESS correctness q false w4)" >/dev/null 2>&1
+bash "$RI" --id Q1 --accepted --reason "a96.js で弾いている" >/dev/null 2>&1
+rec13 .review-reports/w4a --verdict must-address --items "$T/Q1-w4.json" >/dev/null 2>&1
+case " $(ids) " in *" Q1:accepted "*) ok "記録し直しでも、付けた accepted を残す（W4）" ;; *) ng "W4: $(ids)" ;; esac
+# W3: 差分レビューの記録は、効いている pre-push が対応しているときだけ受け付ける
+G checkout -q -b i3 origin/main
+echo 1 > a97.js; echo 2 > a98.js; G add a97.js a98.js; G commit -qm big
+run --out .review-reports/w3a; rec13 .review-reports/w3a --verdict pass >/dev/null 2>&1
+echo 3 >> a97.js; G commit -qam w3b
+run --out .review-reports/w3b
+mkdir -p "$T/oldhooks"; printf '#!/bin/sh\n# 古いフック\nexit 0\n' > "$T/oldhooks/pre-push"; chmod +x "$T/oldhooks/pre-push"
+git config core.hooksPath "$T/oldhooks"
+rec13 .review-reports/w3b --verdict pass && ng "古い pre-push のまま差分レビューを記録した（W3）" || ok "古い pre-push では差分レビューを記録しない（W3）"
+grep -q 'pre-push' "$T/rg.out" && ok "pre-push の入れ替えを案内する（W3）" || ng "W3 の案内: $(cat "$T/rg.out")"
+cp "$HOOK" "$T/oldhooks/pre-push"
+rec13 .review-reports/w3b --verdict pass && ok "対応した pre-push なら記録できる（W3）" || ng "W3（新しいフック）: $(cat "$T/rg.out")"
+git config --unset core.hooksPath
+rm -rf .ai-review
 
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"
 G checkout -q -b cap1 origin/main

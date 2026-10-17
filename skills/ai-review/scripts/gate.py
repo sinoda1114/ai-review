@@ -508,6 +508,8 @@ def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
         and prev.get("chain_base")
         and prev.get("chain_base") == merge_base
         and isinstance(prev.get("full_count"), int) and prev["full_count"] >= 1
+        # レビュアーが 1 本も結果を返さなかった記録（中身のない block）とはつながない
+        and "_none" not in (prev.get("sources") or {})
         # 深掘りを求められたのに済ませていない記録とはつながない（つなぐと、次の差分の記録で深掘りの義務が消える）
         and not (prev.get("escalate") is True and prev.get("escalation_done") is not True
                  and prev.get("skipped_by_user") is not True)
@@ -593,6 +595,15 @@ def cmd_record(a):
     # 同じ run か: run ディレクトリの名前（run-<時刻>）で比べる（--report が相対パスでも、どこから記録しても同じになる）
     same_run = bool(a.run) and bool(prev.get("report")) and \
         os.path.basename(os.path.dirname(os.path.normpath(prev["report"]))) == os.path.basename(os.path.normpath(a.run))
+    if same_run:
+        # 同じ出力先で run-reviews.sh を回し直したなら、記録し直しではない（レビュー済みの印が前の記録より新しい）
+        try:
+            ran = os.path.getmtime(os.path.join(a.run, "reviewed_sha.review"))
+            rec_at = datetime.datetime.strptime(prev.get("recorded_at") or "", "%Y-%m-%dT%H:%M:%S%z").timestamp()
+            same_run = ran < rec_at + 1  # recorded_at は秒で切り捨てているので 1 秒の余裕を見る
+        except (OSError, ValueError):
+            same_run = False
+    replaced = {}
     prev_prev = prev.get("_previous")
     if isinstance(prev_prev, str):
         try:
@@ -605,6 +616,7 @@ def cmd_record(a):
                                                              or prev.get("since_sha") == sc0.get("since")):
             # 同じ HEAD・同じ範囲の run を記録し直す（深掘りを後から済ませたときなど）。
             # 前回の記録は今回の結果なので、その前の記録をつなぎ先にする
+            replaced = prev  # 記録し直す前の記録（その間に付けた項目の処理を引き継ぐ）
             prev = prev_prev
     is_dry = bool(a.run) and os.path.exists(os.path.join(a.run, "dry-run.flag"))
     chained = chain_continues(prev, a.branch, a.merge_base, a.prev_ancestor == "true", is_dry)
@@ -640,6 +652,17 @@ def cmd_record(a):
         s = None
         if items:
             die("--no-diff の記録に項目は付けられません")
+
+    # 記録し直しでは、同じ ID の項目に付けた処理（fixed・accepted・検証・承認）を引き継ぐ
+    if replaced:
+        done = {str(it.get("id")): it for it in replaced.get("must_address") or []
+                if isinstance(it, dict) and it.get("status") in ("fixed", "accepted")}
+        keep = ("status", "history", "reason", "verifier", "verifier_note", "approved_by", "approval_note",
+                "fixed_at", "fixed_note")
+        for it in items:
+            old = done.get(str(it["id"]))
+            if old and old.get("file") == it.get("file") and old.get("summary") == it.get("summary"):
+                it.update({k: old[k] for k in keep if k in old})
 
     # 自動で足す項目（判定表の欠け・結論を読めない出力）
     if s:

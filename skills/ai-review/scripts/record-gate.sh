@@ -113,6 +113,18 @@ d = json.load(open(sys.argv[1], encoding="utf-8"))
 print(d.get("since") or "" if d.get("scope") == "incremental" else "")' "$report_dir/scope.json" 2>/dev/null)" || {
         echo "run ディレクトリの scope.json を読めません。/ai-review を回し直してください" >&2; exit 1; }
       [ -n "$inc_since" ] && want_base="$inc_since"
+      # 差分レビューの記録は、効いている pre-push が差分レビューの決まり（全体レビュー 2 回 = full_count）を知っているときだけ
+      # 受け付ける。古いフックはこの決まりを知らないので、全体を 1 回しか経ていない記録でも push を通してしまう
+      if [ -n "$inc_since" ]; then
+        hp="$(git config --get core.hooksPath 2>/dev/null || true)"
+        [ -n "$hp" ] || hp="$(git rev-parse --git-path hooks 2>/dev/null)"
+        case "$hp" in "~/"*) hp="$HOME/${hp#\~/}" ;; esac
+        if [ -f "$hp/pre-push" ] && ! grep -q 'full_count' "$hp/pre-push"; then
+          echo "効いている pre-push（$hp/pre-push）が古く、差分レビューの記録を正しく検査できません。" >&2
+          echo "スキルの hooks/pre-push に入れ替えてから記録し直してください（SKILL.md §6）。" >&2
+          exit 1
+        fi
+      fi
     fi
     for f in "$report_dir"/reviewed_base.*; do
       [ -f "$f" ] || continue
