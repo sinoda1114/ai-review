@@ -123,6 +123,10 @@ mkrepo "$T/r8"; G -C "$T/r8" switch -q --orphan fresh 2>/dev/null || G -C "$T/r8
 # ref が全部壊れていても（ほかの ref が無い）、まだ無いと取り違えない
 mkrepo "$T/r9"; for r in "$T/r9/.git/refs/heads/"*; do echo garbage > "$r"; done; rm -f "$T/r9/.git/packed-refs"
 ( . "$here/reports-guard.sh"; reports_unreadable "$T/r9" HEAD ) && ok "ref が全部壊れていたら読めないと扱う" || ng "ref が全部壊れたのを、まだ無いと取り違えた"
+# reports-guard.sh を読み込めなければ、検査を素通りせずに止まる
+mkdir -p "$T/noguard"; cp "$here/resolve-item.sh" "$here/gate.py" "$T/noguard/"
+(cd "$T/r3" && bash "$T/noguard/resolve-item.sh" --list > "$T/noguard.out" 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q 'reports-guard.sh' "$T/noguard.out" && ok "reports-guard.sh が無ければ止まる" || ng "素通りした: rc=$rc $(head -1 "$T/noguard.out")"
 # 一時ファイルの名前は予測できない
 ! grep -q '".tmp"' "$RR" && grep -q 'mkstemp' "$RR" && ok "run-reviews.sh の一時ファイルは mkstemp で作る" || ng "予測できる .tmp が残っている"
 

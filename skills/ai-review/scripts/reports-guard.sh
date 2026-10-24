@@ -6,6 +6,8 @@
 #   索引だけを見ると、git rm --cached で外しただけのコミット済みの .review-reports を見落とす。
 #   どの階層でも、大文字小文字を区別せずに見る（macOS の既定のファイルシステムは大文字小文字を区別しない）。
 #   grep -q は途中で読むのをやめ、pipefail の下で上流が SIGPIPE で失敗扱いになるので、-c で最後まで読む。
+#   既知の限界: ファイルシステムの上での別名（同じ実体になる綴りの違う名前）の確認は、索引と作業ツリーだけで行う
+#   （チェックアウトしていないコミットのツリーの名前は、ファイルシステムで比べられない）。
 # reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）
 reports_unreadable() {
   if ! git -C "$1" rev-parse -q --verify "$2" >/dev/null 2>&1; then
@@ -41,7 +43,7 @@ reports_untrusted() {
   local first
   while IFS= read -r first; do
     [ -n "$first" ] && [ "$first" != ".review-reports" ] && [ "$top/$first" -ef "$top/.review-reports" ] && return 0
-  done < <(git -C "$top" ls-files -z 2>/dev/null | tr '\0' '\n' | cut -d/ -f1 | sort -u)
+  done < <(git -C "$top" ls-files -z 2>/dev/null | tr '\0' '\n' | cut -d/ -f1 | LC_ALL=C sort -u)
   [ $# -gt 0 ] || set -- HEAD
   for c in "$@"; do
     reports_unreadable "$top" "$c" && { REPORTS_WHY=unreadable; return 0; }

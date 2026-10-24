@@ -98,7 +98,7 @@ done
 guard_reports_dir() {
   local top="$1"
   # 検査の中身は reports-guard.sh（索引に加えて、コミットのツリーも見る）
-  . "$script_dir/reports-guard.sh"
+  . "$script_dir/reports-guard.sh" || { echo "同梱の reports-guard.sh を読み込めません。.review-reports を確かめられないので止めます" >&2; exit 1; }   # 読めないまま検査を素通りしない
   if reports_untrusted "$top"; then
     reports_untrusted_message
     exit 1
