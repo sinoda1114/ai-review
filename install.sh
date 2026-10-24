@@ -31,7 +31,7 @@ done
 unset GIT_CONFIG GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 MARK='# ai-review-managed-hook'   # このフックが入れたものかどうかを見分ける印の行
-repo="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo="$(CDPATH='' cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 src="$repo/skills/ai-review"
 [ -f "$src/SKILL.md" ] || { echo "スキルが見つかりません: ${src}" >&2; exit 1; }
 ts="$(date +%Y%m%d%H%M%S).$$"   # 同じ秒に実行しても退避名がぶつからないように
@@ -69,7 +69,7 @@ backup_root="$HOME/.claude/ai-review-backup"   # skills の外に退避する（
 
 # 導入先に直接 clone したリポジトリから実行すると、リポジトリ自身を退避してしまう
 if [ $hook_only -eq 0 ] && [ -d "$dst" ] && [ ! -L "$dst" ]; then
-  real_dst="$(cd "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ] \
+  real_dst="$(cd -P "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ] \
     || { echo "スキルの導入先（${dst}）に入れません。権限を確かめてから実行してください。" >&2; exit 1; }
   case "$src/" in
     "$real_dst"/*)
@@ -82,7 +82,7 @@ fi
 hook_skill="$dst"; [ $hook_only -eq 1 ] && hook_skill="$src"
 # フックの中では二重引用符の中に入るので、記号を含むパスは扱わない
 case "$hook_skill" in
-  *[!A-Za-z0-9/._\ -]*)
+  *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/._\ -]*)   # 範囲指定はロケールで広がるので、文字を並べる
     echo "スキルの場所に扱えない文字が含まれます: ${hook_skill}（英数字・/._- と空白のみ対応）" >&2
     [ $hook_only -eq 1 ] && echo "--hook-only はこのリポジトリの場所を使うので、そうした文字を含まない場所に clone し直してください。" >&2
     exit 1 ;;
@@ -159,7 +159,7 @@ same_place() {  # 2 つの書き方が同じ場所を指すなら真（あるデ
   case "$a" in /*) ;; *) return 1 ;; esac
   case "$b" in /*) ;; *) return 1 ;; esac
   [ "$a" = "$b" ] && return 0
-  [ -d "$a" ] && [ -d "$b" ] && [ "$(cd "$a" && pwd -P)" = "$(cd "$b" && pwd -P)" ]
+  [ -d "$a" ] && [ -d "$b" ] && [ "$(cd -P "$a" && pwd -P)" = "$(cd -P "$b" && pwd -P)" ]   # cd -P: .. をリンクの先で解決する
 }
 
 # フックの置き場所を決める（まだ書き換えない）
@@ -221,7 +221,7 @@ if problem="$(unsafe_route "$hooks")"; then
 fi
 # /tmp の形の場所を通るなら、置き場所が消えた後に他人に同じ名前で作り直されうる（再起動や定期の掃除で消える）
 d="$hooks"; while [ ! -e "$d" ]; do d="$(dirname "$d")"; done
-d="$(cd "$d" 2>/dev/null && pwd -P || true)"
+d="$(cd -P "$d" 2>/dev/null && pwd -P || true)"
 while [ -n "$d" ]; do
   if is_system_tmp "$d"; then
     echo "== 注意: フックの置き場所（${hooks}）が、誰でも書き込める ${d} の下にあります。消えると他人に作り直されることがあるので、ホームの下に置くことを勧めます" >&2
@@ -292,7 +292,7 @@ echo "== スキルの導入"
 if [ $hook_only -eq 1 ]; then
   echo "  入れません（--hook-only）。フックの案内文には ${src} の場所を書きます"
   inside_dst=0
-  if real_dst="$(cd "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ]; then
+  if real_dst="$(cd -P "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ]; then
     # 導入先の実体がこのスキルそのもの（リンクで入れた後）なら、2 つ読み込まれるので知らせる
     if [ "$real_dst" != "$src" ]; then case "$src/" in "$real_dst"/*) inside_dst=1 ;; esac; fi
   fi
@@ -302,7 +302,7 @@ if [ $hook_only -eq 1 ]; then
 else
 ( umask 022; mkdir -p "$skills" )   # umask 002 でも、グループがスキルを仕込める置き場所を作らない
 same=0
-if [ $copy -eq 0 ] && [ -L "$dst" ] && [ "$(cd "$dst" && pwd -P)" = "$(cd "$src" && pwd -P)" ]; then same=1; fi
+if [ $copy -eq 0 ] && [ -L "$dst" ] && [ "$(cd -P "$dst" && pwd -P)" = "$(cd -P "$src" && pwd -P)" ]; then same=1; fi
 if [ $copy -eq 1 ] && [ -d "$dst" ] && [ ! -L "$dst" ] && diff -rq "$src" "$dst" >/dev/null 2>&1; then same=1; fi
 if [ $same -eq 1 ]; then
   echo "  導入済み（変更なし）: ${dst}"

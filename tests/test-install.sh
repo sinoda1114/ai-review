@@ -313,6 +313,13 @@ rm -rf "$T/decoy" "$T/home34"; mkdir -p "$T/decoy/$(basename "$root")/skills/ai-
 ( cd "$(dirname "$root")" && CDPATH="$T/decoy" HOME="$T/home34" GIT_CONFIG_GLOBAL="$T/home34/.gitconfig" bash "$(basename "$root")/install.sh" >"$T/out37" 2>&1 ); rc=$?
 [ $rc -eq 0 ] && [ "$(cd "$T/home34/.claude/skills/ai-review" && pwd -P)" = "$(cd "$root/skills/ai-review" && pwd -P)" ] && ok "CDPATH の影響を受けない" || ng "CDPATH: rc=$rc $(tail -2 "$T/out37")"
 
+echo "4z6b. 上書き値のリンクと .. は、実体の場所で比べる"
+rm -rf "$T/h50"; mkdir -p "$T/h50/hooks" "$T/h50/other/deep" "$T/h50/other/hooks"; ln -s "$T/h50/other/deep" "$T/h50/link"
+HOME="$T/h50" GIT_CONFIG_GLOBAL="$T/h50/.gitconfig" git config --global core.hooksPath "$T/h50/hooks"
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$T/h50/link/../hooks" \
+  HOME="$T/h50" GIT_CONFIG_GLOBAL="$T/h50/.gitconfig" bash "$INSTALL" >"$T/out53" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/h50/hooks/pre-push" ] && ok "リンクの先の .. で別の場所を指す上書きでは止まる" || ng "論理パスで同じとみなした rc=$rc"
+
 echo "4z7. 置き場所に書き込めないなら、スキルにも設定にも触らずに止まる"
 if [ "$(id -u)" -eq 0 ]; then echo "  SKIP root はどこにでも書ける"; else
 rm -rf "$T/home35"; mkdir -p "$T/home35/.git-hooks"; chmod 555 "$T/home35/.git-hooks"
