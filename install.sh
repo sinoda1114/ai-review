@@ -115,9 +115,11 @@ unsafe_dir() {  # 親として危ないなら真。本人か root の持ち物�
   return 1
 }
 unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リンクは中身を展開して続ける。カーネルがパスを解決する順と同じ）。
-                  # 通るディレクトリが危ないか、リンクの持ち主が本人・root でなければ、その場所と理由を出して真
+                  # 通るディレクトリが危ないか、リンクの持ち主が本人・root でなければ、その場所と理由を route_problem に入れて真。
+                  # 通った /tmp の形の場所は route_tmp に残す（実体のパスだけを見ると、/tmp に置いたリンクを見落とす）
   local cur=/ rest="$1" comp next target hops=0 uid
-  if unsafe_dir /; then printf '%s' "/（持ち主か権限）"; return 0; fi
+  route_problem=""; route_tmp=""
+  if unsafe_dir /; then route_problem="/（持ち主か権限）"; return 0; fi
   while [ -n "$rest" ]; do
     rest="${rest#/}"; comp="${rest%%/*}"
     if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
@@ -125,17 +127,18 @@ unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リ
     next="${cur%/}/$comp"
     if [ -L "$next" ]; then
       hops=$((hops + 1))
-      [ $hops -le 40 ] || { printf '%s' "${next}（リンクが多すぎます）"; return 0; }
+      [ $hops -le 40 ] || { route_problem="${next}（リンクが多すぎます）"; return 0; }
       uid="$(ls -ldn "$next" | awk '{print $3}')"
-      [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || { printf '%s' "${next}（リンクの持ち主が本人でも root でもありません）"; return 0; }
+      [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || { route_problem="${next}（リンクの持ち主が本人でも root でもありません）"; return 0; }
       target="$(readlink "$next")"
       case "$target" in /*) cur=/ ;; esac   # 相対のリンクは、リンクを置いた場所から
       rest="$target${rest:+/$rest}"
       continue
     fi
     [ -e "$next" ] || return 1   # ここから先はまだ無い（umask 022 で作る）
-    [ -d "$next" ] || { printf '%s' "${next}（ディレクトリではありません）"; return 0; }
-    if unsafe_dir "$next"; then printf '%s' "${next}（持ち主か権限）"; return 0; fi
+    [ -d "$next" ] || { route_problem="${next}（ディレクトリではありません）"; return 0; }
+    if is_system_tmp "$next"; then route_tmp="$next"; fi
+    if unsafe_dir "$next"; then route_problem="${next}（持ち主か権限）"; return 0; fi
     cur="$next"
   done
   return 1
@@ -154,12 +157,19 @@ norm_path() {  # git と同じく先頭の ~ と ~/ を展開し、末尾の / �
   [ "$v" = / ] || v="${v%/}"
   printf '%s' "$v"
 }
-same_place() {  # 2 つの書き方が同じ場所を指すなら真（あるディレクトリは実体の形で比べる。相対パスは git がリポジトリごとに解決するので、同じとみなさない）
+canon_path() {  # 実体の形にする。まだ無い部分は、いちばん近くにある親を実体に直して付け足す（cd -P: .. をリンクの先で解決する）
+  local p="$1" rest=""
+  while [ ! -e "$p" ] && [ "$p" != / ]; do rest="/$(basename "$p")$rest"; p="$(dirname "$p")"; done
+  p="$(cd -P "$p" 2>/dev/null && pwd -P)" || { printf '%s' "$1"; return 0; }
+  [ "$p" = / ] && p=""
+  printf '%s' "$p$rest"
+}
+same_place() {  # 2 つの書き方が同じ場所を指すなら真（実体の形で比べる。相対パスは git がリポジトリごとに解決するので、同じとみなさない）
   local a b; a="$(norm_path "$1")"; b="$(norm_path "$2")"
   case "$a" in /*) ;; *) return 1 ;; esac
   case "$b" in /*) ;; *) return 1 ;; esac
   [ "$a" = "$b" ] && return 0
-  [ -d "$a" ] && [ -d "$b" ] && [ "$(cd -P "$a" && pwd -P)" = "$(cd -P "$b" && pwd -P)" ]   # cd -P: .. をリンクの先で解決する
+  [ "$(canon_path "$a")" = "$(canon_path "$b")" ]
 }
 
 # フックの置き場所を決める（まだ書き換えない）
@@ -214,22 +224,15 @@ if [ -e "$hooks" ] && [ ! -d "$hooks" ]; then
   echo "フックの置き場所（${hooks}）がディレクトリではありません。core.hooksPath を直してから実行してください。" >&2
   exit 1
 fi
-if problem="$(unsafe_route "$hooks")"; then
-  echo "フックの置き場所（${hooks}）までの途中に問題があります: ${problem}" >&2
+if unsafe_route "$hooks"; then
+  echo "フックの置き場所（${hooks}）までの途中に問題があります: ${route_problem}" >&2
   echo "自分か root の持ち物でないか、他人（専用でないグループを含む）が書き込める場所があると、置き場所ごと差し替えられます。直すか別の場所にしてください。" >&2
   exit 1
 fi
 # /tmp の形の場所を通るなら、置き場所が消えた後に他人に同じ名前で作り直されうる（再起動や定期の掃除で消える）
-d="$hooks"; while [ ! -e "$d" ]; do d="$(dirname "$d")"; done
-d="$(cd -P "$d" 2>/dev/null && pwd -P || true)"
-while [ -n "$d" ]; do
-  if is_system_tmp "$d"; then
-    echo "== 注意: フックの置き場所（${hooks}）が、誰でも書き込める ${d} の下にあります。消えると他人に作り直されることがあるので、ホームの下に置くことを勧めます" >&2
-    break
-  fi
-  [ "$d" = / ] && break
-  d="$(dirname "$d")"
-done
+if [ -n "$route_tmp" ]; then
+  echo "== 注意: フックの置き場所（${hooks}）が、誰でも書き込める ${route_tmp} の下にあります。消えると他人に作り直されることがあるので、ホームの下に置くことを勧めます" >&2
+fi
 if [ -e "$hooks" ] && [ ! -O "$hooks" ]; then
   echo "フックの置き場所（${hooks}）が自分の持ち物ではありません。自分の持ち物の場所に core.hooksPath を設定し直してから実行してください。" >&2
   exit 1
@@ -267,10 +270,9 @@ fi
 # 置き場所を先に作り、作った後の持ち主と権限を確かめる（止まるときに、スキルや設定を書き換えずに済むように）
 if [ ! -e "$hooks" ]; then
   ( umask 022; mkdir -p "$hooks" ) || { echo "フックの置き場所（${hooks}）を作れません。権限を確かめてください。" >&2; exit 1; }
-  problem=""
   # 確かめてから作るまでの間に、他人が途中を先に作っていないか
-  if problem="$(unsafe_route "$hooks")" || unsafe_path "$hooks"; then
-    echo "== 失敗: 作ったフックの置き場所（${hooks}）か途中の持ち主・権限が想定と違います（${problem:-置き場所}）。ほかは書き換えていません" >&2
+  if unsafe_route "$hooks" || unsafe_path "$hooks"; then
+    echo "== 失敗: 作ったフックの置き場所（${hooks}）か途中の持ち主・権限が想定と違います（${route_problem:-置き場所}）。ほかは書き換えていません" >&2
     exit 1
   fi
   echo "  フックの置き場所を作りました: ${hooks}"

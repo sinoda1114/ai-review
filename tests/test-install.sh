@@ -398,7 +398,18 @@ if [ -k /tmp ] && [ "$(ls -ldn /tmp/ | awk '{print $3}')" = 0 ]; then
   HOME="$T/home49" GIT_CONFIG_GLOBAL="$T/home49/.gitconfig" bash "$INSTALL" >"$T/out52" 2>&1; rc=$?
   rm -rf "$tmph"
   [ $rc -eq 0 ] && grep -q '作り直される' "$T/out52" && ok "/tmp の下の置き場所には注意を出す" || ng "/tmp の注意なし rc=$rc $(tail -2 "$T/out52")"
+  rm -rf "$T/h51"; mkdir -p "$T/h51/real"; tmpl="$(mktemp -u /tmp/ai-review-L.XXXXXX)"; ln -s "$T/h51/real" "$tmpl"
+  HOME="$T/h51" GIT_CONFIG_GLOBAL="$T/h51/.gitconfig" git config --global core.hooksPath "$tmpl/hooks"
+  HOME="$T/h51" GIT_CONFIG_GLOBAL="$T/h51/.gitconfig" bash "$INSTALL" >"$T/out54" 2>&1; rc=$?
+  rm -f "$tmpl"
+  [ $rc -eq 0 ] && grep -q '作り直される' "$T/out54" && ok "/tmp に置いたリンクを通る置き場所にも注意を出す" || ng "/tmp のリンクで注意なし rc=$rc $(tail -2 "$T/out54")"
 else echo "  SKIP /tmp が root のスティッキービット付きでない"; fi
+
+echo "4y7. まだ無い置き場所でも、リンク越しに同じ場所を指す上書きは止めない"
+rm -rf "$T/h52" "$T/h52alias"; mkdir -p "$T/h52"; ln -s "$T/h52" "$T/h52alias"
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$T/h52alias/.git-hooks" \
+  HOME="$T/h52" GIT_CONFIG_GLOBAL="$T/h52/.gitconfig" bash "$INSTALL" >"$T/out55" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -x "$T/h52/.git-hooks/pre-push" ] && ok "リンク越しの同じ場所の上書きでは止めない" || ng "同じ場所を別とみなした rc=$rc $(tail -2 "$T/out55")"
 
 echo "4x. 置き場所の途中の親も、umask 002 でグループに書き込ませない"
 rm -rf "$T/home19"; mkdir -p "$T/home19"
