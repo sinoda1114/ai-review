@@ -274,6 +274,31 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 $pid 2>/dev/null || break; sleep 1; do
 if kill -0 $pid 2>/dev/null; then kill $pid; ng "HOME が相対のとき 10 秒で終わらない"
 else wait $pid; rc=$?; [ $rc -ne 0 ] && [ ! -e "$T/rel/h/.claude" ] && ok "相対の HOME では何も書き換えずに止まる" || ng "相対の HOME: rc=$rc"; fi
 
+echo "4z2. ~user の形の core.hooksPath は扱わずに止まる"
+rm -rf "$T/home31"; mkdir -p "$T/home31"
+HOME="$T/home31" GIT_CONFIG_GLOBAL="$T/home31/.gitconfig" git config --global core.hooksPath '~bob/hooks'
+HOME="$T/home31" GIT_CONFIG_GLOBAL="$T/home31/.gitconfig" bash "$INSTALL" >"$T/out33" 2>&1; rc=$?
+[ $rc -ne 0 ] && grep -q '~bob' "$T/out33" && [ ! -e "$T/home31/.claude" ] && ok "~user の形では何も書き換えずに止まる" || ng "~user: rc=$rc $(tail -2 "$T/out33")"
+
+echo "4z3. GIT_CONFIG_GLOBAL が相対パスなら止める"
+rm -rf "$T/rel2"; mkdir -p "$T/rel2/h"
+( cd "$T/rel2" && HOME="$T/rel2/h" GIT_CONFIG_GLOBAL=h/.gitconfig bash "$INSTALL" >"$T/out34" 2>&1 ); rc=$?
+[ $rc -ne 0 ] && grep -q 'GIT_CONFIG_GLOBAL' "$T/out34" && [ ! -e "$T/rel2/h/.claude" ] && ok "相対の GIT_CONFIG_GLOBAL では止まる" || ng "相対の GIT_CONFIG_GLOBAL: rc=$rc"
+
+echo "4z4. umask 002 でも、スキルの置き場所をグループに書き込ませない"
+rm -rf "$T/home32"; mkdir -p "$T/home32"
+( umask 002; HOME="$T/home32" GIT_CONFIG_GLOBAL="$T/home32/.gitconfig" bash "$INSTALL" >"$T/out35" 2>&1 ); rc=$?
+[ $rc -eq 0 ] && [ -z "$(find "$T/home32/.claude" "$T/home32/.claude/skills" -maxdepth 0 -perm -0020)" ] && ok "作った ~/.claude/skills はグループに書き込ませない" || ng "skills の権限: rc=$rc $(ls -ld "$T/home32/.claude/skills")"
+
+echo "4z5. リンク先の無いリンクの pre-push も、--force なしでは置き換えない"
+rm -rf "$T/home33"; mkdir -p "$T/home33/.git-hooks"; ln -s "$T/home33/mine" "$T/home33/.git-hooks/pre-push"
+HOME="$T/home33" GIT_CONFIG_GLOBAL="$T/home33/.gitconfig" bash "$INSTALL" >"$T/out36" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ -L "$T/home33/.git-hooks/pre-push" ] && ok "壊れたリンクのフックも別のフックとして扱う" || ng "壊れたリンクを置き換えた rc=$rc"
+
+echo "4z6. CDPATH があっても動く"
+CDPATH="$T" inst; rc=$?
+[ $rc -eq 0 ] && ok "CDPATH の影響を受けない" || ng "CDPATH: rc=$rc $(tail -2 "$T/out")"
+
 echo "4v3. パスの途中にリンク先の無いリンクがあれば、何も書き換えずに止まる"
 rm -rf "$T/home25"; mkdir -p "$T/home25"; ln -s "$T/home25/missing" "$T/home25/x"
 HOME="$T/home25" GIT_CONFIG_GLOBAL="$T/home25/.gitconfig" git config --global core.hooksPath "$T/home25/x/hooks"

@@ -28,7 +28,7 @@ done
 [ $hook_only -eq 1 ] && [ $copy -eq 1 ] && { echo "--hook-only と --copy は一緒に使えません（--hook-only はスキルを入れません）" >&2; exit 2; }
 
 MARK='# ai-review-managed-hook'   # このフックが入れたものかどうかを見分ける印の行
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 src="$repo/skills/ai-review"
 [ -f "$src/SKILL.md" ] || { echo "スキルが見つかりません: ${src}" >&2; exit 1; }
 ts="$(date +%Y%m%d%H%M%S).$$"   # 同じ秒に実行しても退避名がぶつからないように
@@ -50,6 +50,13 @@ case "$HOME" in
   /*) ;;
   *) echo "HOME が絶対パスではありません（${HOME}）。絶対パスにしてから実行してください。" >&2; exit 1 ;;
 esac
+# git はこれらを実行した場所から解決するので、相対だと、読む設定と書く設定が別のファイルになる
+for v in GIT_CONFIG_GLOBAL XDG_CONFIG_HOME; do
+  case "${!v:-/}" in   # 空は未設定と同じ扱い
+    /*) ;;
+    *) echo "${v} が絶対パスではありません（${!v}）。絶対パスにしてから実行してください。" >&2; exit 1 ;;
+  esac
+done
 skills="$HOME/.claude/skills"; dst="$skills/ai-review"
 backup_root="$HOME/.claude/ai-review-backup"   # skills の外に退避する（skills の中だと二重に読み込まれる）
 
@@ -130,8 +137,9 @@ broken_link_in() {  # $1 かその途中に、リンク先の無いシンボリ�
   done
   return 1
 }
-norm_path() {  # git と同じく先頭の ~ を展開し、末尾の / を落とす
-  local v="${1/#\~/$HOME}"
+norm_path() {  # git と同じく先頭の ~ と ~/ を展開し、末尾の / を落とす（~user の形は展開しない。呼ぶ前に止める）
+  local v="$1"
+  case "$v" in "~") v="$HOME" ;; "~/"*) v="$HOME/${v#\~/}" ;; esac
   [ "$v" = / ] || v="${v%/}"
   printf '%s' "$v"
 }
@@ -145,6 +153,10 @@ same_place() {  # 2 つの書き方が同じ場所を指すなら真（あるデ
 # --global では include を既定でたどらないので、--includes を付ける。
 # リポジトリの外（/）で読み、includeIf の条件で実行した場所ごとに値が変わらないようにする
 hooks="$(cd / && git config --global --includes --get core.hooksPath || true)"
+case "$hooks" in
+  "~"|"~/"*) ;;
+  "~"*) echo "グローバルの core.hooksPath の ~user の形（${hooks}）には対応していません。絶対パスで設定し直してから実行してください。" >&2; exit 1 ;;
+esac
 hooks="$(norm_path "$hooks")"
 set_hooks_path=0
 if [ -z "$hooks" ]; then
@@ -193,7 +205,7 @@ trap 'rm -f "$new" ${tmp_hook:+"$tmp_hook"}' EXIT
 sed "s|__AI_REVIEW_SKILL_DIR__|$hook_skill|" "$src/hooks/pre-push" > "$new"
 bash -n "$new" || { echo "フックの組み立てに失敗しました" >&2; exit 1; }
 replace_hook=0
-if [ -e "$hooks/pre-push" ] && ! cmp -s "$new" "$hooks/pre-push"; then
+if { [ -e "$hooks/pre-push" ] || [ -L "$hooks/pre-push" ]; } && ! cmp -s "$new" "$hooks/pre-push"; then
   if ! grep -qxF "$MARK" "$hooks/pre-push" && [ $force -eq 0 ]; then
     echo "別の pre-push フックがあります: $hooks/pre-push" >&2
     echo "中身を確かめてから --force で入れ直してください（元のフックは pre-push.bak.<時刻> に退避されます）。" >&2
@@ -222,7 +234,7 @@ if [ $hook_only -eq 1 ]; then
     echo "  注意: ${dst} も残っています。プラグインと両方あるとスキルが 2 つ読み込まれるので、要らなければ消してください" >&2
   fi
 else
-mkdir -p "$skills"
+( umask 022; mkdir -p "$skills" )   # umask 002 でも、グループがスキルを仕込める置き場所を作らない
 same=0
 if [ $copy -eq 0 ] && [ -L "$dst" ] && [ "$(cd "$dst" && pwd -P)" = "$(cd "$src" && pwd -P)" ]; then same=1; fi
 if [ $copy -eq 1 ] && [ -d "$dst" ] && [ ! -L "$dst" ] && diff -rq "$src" "$dst" >/dev/null 2>&1; then same=1; fi
@@ -230,7 +242,7 @@ if [ $same -eq 1 ]; then
   echo "  導入済み（変更なし）: ${dst}"
 else
   if [ -e "$dst" ] || [ -L "$dst" ]; then
-    mkdir -p "$backup_root"
+    ( umask 022; mkdir -p "$backup_root" )
     mv "$dst" "$backup_root/ai-review.$ts"; echo "  既存の ${dst} を ${backup_root}/ai-review.${ts} に退避しました"
   fi
   if [ $copy -eq 1 ]; then cp -R "$src" "$dst"; echo "  コピーしました: ${dst}"
@@ -247,7 +259,7 @@ else
   echo "  既存の core.hooksPath を使います: ${hooks}"
 fi
 if [ $replace_hook -eq 1 ]; then
-  cp "$hooks/pre-push" "$hooks/pre-push.bak.$ts"; echo "  既存の pre-push を ${hooks}/pre-push.bak.${ts} に退避しました"
+  cp -P "$hooks/pre-push" "$hooks/pre-push.bak.$ts"; echo "  既存の pre-push を ${hooks}/pre-push.bak.${ts} に退避しました"
 fi
 if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hooks/pre-push" && ! unsafe_path "$hooks/pre-push"; then
   chmod +x "$hooks/pre-push"
