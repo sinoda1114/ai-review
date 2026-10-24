@@ -127,6 +127,12 @@ mkrepo "$T/r9"; for r in "$T/r9/.git/refs/heads/"*; do echo garbage > "$r"; done
 mkdir -p "$T/noguard"; cp "$here/resolve-item.sh" "$here/gate.py" "$T/noguard/"
 (cd "$T/r3" && bash "$T/noguard/resolve-item.sh" --list > "$T/noguard.out" 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q 'reports-guard.sh' "$T/noguard.out" && ok "reports-guard.sh が無ければ止まる" || ng "素通りした: rc=$rc $(head -1 "$T/noguard.out")"
+# 不正な UTF-8 の名前があっても、言語設定のせいで検査を素通りしない
+mkrepo "$T/r10"; bl="$(printf 'x' | git -C "$T/r10" hash-object -w --stdin)"
+printf '100644 %s\t-\377\n100644 %s\t.review-reports/latest.json\n' "$bl" "$bl" | git -C "$T/r10" update-index --index-info
+( export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8; . "$here/reports-guard.sh"; reports_untrusted "$T/r10" ) && ok "不正なバイトの名前の後ろの .review-reports も見落とさない" || ng "言語設定で検査を素通りした"
+(cd "$T/r10" && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" $zero | LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 bash "$HOOK" origin x > "$T/r10.out" 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q '追跡されています' "$T/r10.out" && ok "pre-push も不正なバイトの名前で素通りしない" || ng "pre-push: rc=$rc $(head -1 "$T/r10.out")"
 # 一時ファイルの名前は予測できない
 ! grep -q '".tmp"' "$RR" && grep -q 'mkstemp' "$RR" && ok "run-reviews.sh の一時ファイルは mkstemp で作る" || ng "予測できる .tmp が残っている"
 

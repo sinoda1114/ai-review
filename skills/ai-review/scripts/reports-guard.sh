@@ -34,7 +34,10 @@ reports_untrusted_message() {
   fi
 }
 reports_untrusted() {
+  # 言語設定に左右されない（UTF-8 として不正なバイトの名前で、tr などが途中で止まって検査を素通りしない）
+  local -x LC_ALL=C
   local top="$1"; shift
+  git -C "$top" ls-files -z >/dev/null 2>&1 || { REPORTS_WHY=unreadable; return 0; }   # 索引を読めなければ信用しない
   local pat='(^|/)\.review-reports(/|$)' c
   REPORTS_WHY=link; [ -L "$top/.review-reports" ] && return 0
   REPORTS_WHY=tracked; [ "$(git -C "$top" ls-files -z 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0

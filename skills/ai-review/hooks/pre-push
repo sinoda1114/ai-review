@@ -73,6 +73,8 @@ reports_unreadable() {  # コミットのツリーを読めなければ信用し
 }
 reports_why=""
 reports_untrusted() {
+  local -x LC_ALL=C   # 言語設定に左右されない（不正なバイトの名前で tr などが途中で止まらない）
+  git ls-files -z >/dev/null 2>&1 || { reports_why=unreadable; return 0; }   # 索引を読めなければ信用しない
   local pat='(^|/)\.review-reports(/|$)' c
   [ -L .review-reports ] && return 0
   [ "$(git ls-files -z 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
