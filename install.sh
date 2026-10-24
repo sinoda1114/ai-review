@@ -169,7 +169,7 @@ if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then
 fi
 case "$hooks" in
   "~"|"~/"*) ;;
-  "~"*) echo "グローバルの core.hooksPath の ~user の形（${hooks}）には対応していません。絶対パスで設定し直してから実行してください。" >&2; exit 1 ;;
+  "~"*|"%("*) echo "グローバルの core.hooksPath の ~user や %(prefix) の形（${hooks}）には対応していません。絶対パスで設定し直してから実行してください。" >&2; exit 1 ;;
 esac
 hooks="$(norm_path "$hooks")"
 set_hooks_path=0
@@ -185,6 +185,10 @@ if [ -z "$hooks" ]; then
     t="$(readlink "$gcfg")"; hops=$((hops + 1))
     case "$t" in /*) gcfg="$t" ;; *) gcfg="$(dirname "$gcfg")/$t" ;; esac
   done
+  if [ ! -d "$(dirname "$gcfg")" ]; then
+    echo "グローバルの git の設定を書くディレクトリがありません（$(dirname "$gcfg")）。作ってから実行してください。" >&2
+    exit 1
+  fi
   if [ -e "$gcfg.lock" ] || { [ -e "$gcfg" ] && [ ! -r "$gcfg" ]; } || [ ! -w "$(dirname "$gcfg")" ]; then
     echo "グローバルの git の設定（${gcfg}）に書き込めません（${gcfg}.lock が残っているか、権限が足りません）。直してから実行してください。" >&2
     exit 1
@@ -301,7 +305,10 @@ if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hoo
   echo "  導入済み（変更なし）: ${hooks}/pre-push"
 else
   # 同じディレクトリに書いてから mv で置き換える（既存のフックがリンクでも、リンク先を書き換えない）
-  tmp_hook="$(mktemp "$hooks/.pre-push.new.XXXXXX")"; cp "$new" "$tmp_hook"; chmod +x "$tmp_hook"; mv -f "$tmp_hook" "$hooks/pre-push"; tmp_hook=""
+  tmp_hook="$(mktemp "$hooks/.pre-push.new.XXXXXX")"; cp "$new" "$tmp_hook"; chmod +x "$tmp_hook"
+  # リンクは退避済み。ディレクトリへのリンクだと mv がその中へ移すので、先に消す
+  if [ -L "$hooks/pre-push" ]; then rm -f "$hooks/pre-push"; fi
+  mv -f "$tmp_hook" "$hooks/pre-push"; tmp_hook=""
   echo "  入れました: ${hooks}/pre-push"
 fi
 # core.hooksPath はフックを置いた後に書く（途中で止まっても、ゲートの無い置き場所を指したままにしない）

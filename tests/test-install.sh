@@ -44,7 +44,7 @@ echo other-hook' > "$T/home/.git-hooks/pre-push"
 inst; rc=$?
 [ $rc -ne 0 ] && grep -q "other-hook" "$T/home/.git-hooks/pre-push" && ok "別の pre-push があれば --force なしでは止まる" || ng "別のフックを上書きした（rc=${rc}）"
 inst --force; rc=$?
-[ $rc -eq 0 ] && ls "$T/home/.git-hooks/" | grep -q '^pre-push\.bak\.' && grep -q "__AI_REVIEW_SKILL_DIR__\|^skill_dir=" "$T/home/.git-hooks/pre-push" \
+[ $rc -eq 0 ] && ls "$T/home/.git-hooks/" | grep -q '^pre-push\.bak\.' && grep -q "^skill_dir=\"$T/home/.claude/skills/ai-review\"" "$T/home/.git-hooks/pre-push" \
   && ok "--force なら元のフックを pre-push.bak.* に退避して入れる" || ng "--force: rc=$rc $(ls "$T/home/.git-hooks/")"
 
 echo "4. 既存の core.hooksPath を尊重する"
@@ -301,7 +301,7 @@ HOME="$T/home33" GIT_CONFIG_GLOBAL="$T/home33/.gitconfig" bash "$INSTALL" --forc
 [ $rc -eq 0 ] && [ -L "$(ls -d "$T/home33/.git-hooks/pre-push.bak."* | head -1)" ] && [ ! -L "$T/home33/.git-hooks/pre-push" ] && ok "--force なら壊れたリンクをリンクのまま退避する" || ng "--force の退避: rc=$rc $(ls -la "$T/home33/.git-hooks")"
 
 echo "4z5b. リンクの pre-push は、中身が同じでもリンクのまま退避してから置き直す"
-rm -rf "$T/home41"; mkdir -p "$T/home41/.git-hooks"; inst_hook="$T/home/.git-hooks/pre-push"
+rm -rf "$T/home41"; mkdir -p "$T/home41/.git-hooks";
 sed "s|__AI_REVIEW_SKILL_DIR__|$T/home41/.claude/skills/ai-review|" "$root/skills/ai-review/hooks/pre-push" > "$T/home41/mine"; chmod +x "$T/home41/mine"
 ln -s "$T/home41/mine" "$T/home41/.git-hooks/pre-push"
 HOME="$T/home41" GIT_CONFIG_GLOBAL="$T/home41/.gitconfig" bash "$INSTALL" >"$T/out44" 2>&1; rc=$?
@@ -349,6 +349,20 @@ fi
 rm -rf "$T/home43"; mkdir -p "$T/home43"
 GIT_CONFIG_GLOBAL= HOME="$T/home43" bash "$INSTALL" >"$T/out46" 2>&1; rc=$?
 [ $rc -ne 0 ] && [ ! -e "$T/home43/.claude" ] && grep -q 'GIT_CONFIG_GLOBAL' "$T/out46" && ok "空の GIT_CONFIG_GLOBAL では止まる" || ng "空の GIT_CONFIG_GLOBAL: rc=$rc"
+
+echo "4z10c. %(prefix) の形と、設定ファイルのディレクトリが無いときは、理由を名指しして止まる"
+rm -rf "$T/home44"; mkdir -p "$T/home44"
+HOME="$T/home44" GIT_CONFIG_GLOBAL="$T/home44/.gitconfig" git config --global core.hooksPath '%(prefix)/hooks'
+HOME="$T/home44" GIT_CONFIG_GLOBAL="$T/home44/.gitconfig" bash "$INSTALL" >"$T/out47" 2>&1; rc=$?
+[ $rc -ne 0 ] && grep -q '%(prefix)' "$T/out47" && ! grep -q '相対' "$T/out47" && ok "%(prefix) の形は対応していないと伝える" || ng "%(prefix): rc=$rc $(tail -2 "$T/out47")"
+rm -rf "$T/home45"; mkdir -p "$T/home45"
+HOME="$T/home45" GIT_CONFIG_GLOBAL="$T/home45/nodir/config" bash "$INSTALL" >"$T/out48" 2>&1; rc=$?
+[ $rc -ne 0 ] && grep -q 'ディレクトリがありません' "$T/out48" && ok "設定ファイルのディレクトリが無いと伝える" || ng "nodir: rc=$rc $(tail -2 "$T/out48")"
+
+echo "4z12. pre-push がディレクトリへのリンクでも、--force ならフックを置く"
+rm -rf "$T/home46"; mkdir -p "$T/home46/.git-hooks" "$T/home46/somedir"; ln -s "$T/home46/somedir" "$T/home46/.git-hooks/pre-push"
+HOME="$T/home46" GIT_CONFIG_GLOBAL="$T/home46/.gitconfig" bash "$INSTALL" --force >"$T/out49" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -f "$T/home46/.git-hooks/pre-push" ] && [ ! -L "$T/home46/.git-hooks/pre-push" ] && [ -z "$(ls -A "$T/home46/somedir")" ] && ok "リンクを退避して、フックを置く" || ng "ディレクトリへのリンク: rc=$rc $(ls -la "$T/home46/.git-hooks" "$T/home46/somedir")"
 
 echo "4z11. --copy で入れたスキルは、umask 002 でもグループに書き込ませない"
 rm -rf "$T/home40"; mkdir -p "$T/home40"
