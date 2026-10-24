@@ -23,6 +23,7 @@ for a in "$@"; do
     *) echo "unknown option: ${a}" >&2; exit 2 ;;
   esac
 done
+[ $hook_only -eq 1 ] && [ $copy -eq 1 ] && { echo "--hook-only と --copy は一緒に使えません（--hook-only はスキルを入れません）" >&2; exit 2; }
 
 MARK='# ai-review-managed-hook'   # このフックが入れたものかどうかを見分ける印の行
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -48,8 +49,10 @@ backup_root="$HOME/.claude/ai-review-backup"   # skills の外に退避する（
 
 # 導入先に直接 clone したリポジトリから実行すると、リポジトリ自身を退避してしまう
 if [ $hook_only -eq 0 ] && [ -d "$dst" ] && [ ! -L "$dst" ]; then
+  real_dst="$(cd "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ] \
+    || { echo "スキルの導入先（${dst}）に入れません。権限を確かめてから実行してください。" >&2; exit 1; }
   case "$src/" in
-    "$(cd "$dst" && pwd -P)"/*)
+    "$real_dst"/*)
       echo "このリポジトリがスキルの導入先（${dst}）の中にあります。~/.claude/skills の外に clone し直してから実行してください。" >&2
       exit 1 ;;
   esac
@@ -59,12 +62,20 @@ fi
 hook_skill="$dst"; [ $hook_only -eq 1 ] && hook_skill="$src"
 # フックの中では二重引用符の中に入るので、記号を含むパスは扱わない
 case "$hook_skill" in
-  *[!A-Za-z0-9/._\ -]*) echo "スキルの場所に扱えない文字が含まれます: ${hook_skill}（英数字・/._- と空白のみ対応）" >&2; exit 1 ;;
+  *[!A-Za-z0-9/._\ -]*)
+    echo "スキルの場所に扱えない文字が含まれます: ${hook_skill}（英数字・/._- と空白のみ対応）" >&2
+    [ $hook_only -eq 1 ] && echo "--hook-only はこのリポジトリの場所を使うので、そうした文字を含まない場所に clone し直してください。" >&2
+    exit 1 ;;
 esac
 
+unsafe_path() {  # 自分の持ち物でないか、グループ・他人が書き込めるなら真（-H でリンク先を見る）
+  [ ! -O "$1" ] || [ -n "$(find -H "$1" -maxdepth 0 \( -perm -0020 -o -perm -0002 \) 2>/dev/null)" ]
+}
+
 # フックの置き場所を決める（まだ書き換えない）
-# --global では include を既定でたどらないので、--includes を付ける
-hooks="$(git config --global --includes --get core.hooksPath || true)"
+# --global では include を既定でたどらないので、--includes を付ける。
+# リポジトリの外（/）で読み、includeIf の条件で実行した場所ごとに値が変わらないようにする
+hooks="$(cd / && git config --global --includes --get core.hooksPath || true)"
 hooks="${hooks/#\~/$HOME}"
 set_hooks_path=0
 if [ -z "$hooks" ]; then
@@ -78,8 +89,13 @@ else
   esac
 fi
 # 置き場所をグループや他人が書き換えられると、フックを差し替えられる
-if [ -e "$hooks" ] && { [ ! -O "$hooks" ] || [ -n "$(find "$hooks" -maxdepth 0 \( -perm -0020 -o -perm -0002 \) 2>/dev/null)" ]; }; then
+if [ -e "$hooks" ] && unsafe_path "$hooks"; then
   echo "フックの置き場所（${hooks}）が自分の持ち物でないか、グループ・他人が書き込めます。権限を直してから実行してください（例: chmod go-w ${hooks}）。" >&2
+  exit 1
+fi
+# global より強い指定（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS・git -c）があると、ここに入れてもゲートが動かない
+if scope="$(cd / && git config --show-scope --get core.hooksPath 2>/dev/null)" && [ "${scope%%$'\t'*}" = "command" ]; then
+  echo "core.hooksPath が環境変数（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS）か git -c で ${scope#*$'\t'} に上書きされていて、ゲートが動きません。外してから実行してください。" >&2
   exit 1
 fi
 
@@ -131,11 +147,13 @@ if [ $set_hooks_path -eq 1 ]; then
 else
   echo "  既存の core.hooksPath を使います: ${hooks}"
 fi
-mkdir -p "$hooks"
+if [ ! -e "$hooks" ]; then
+  mkdir -p "$hooks"; chmod go-w "$hooks"   # umask 002 でも、グループが書き込める置き場所を作らない
+fi
 if [ $replace_hook -eq 1 ]; then
   cp "$hooks/pre-push" "$hooks/pre-push.bak.$ts"; echo "  既存の pre-push を ${hooks}/pre-push.bak.${ts} に退避しました"
 fi
-if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hooks/pre-push"; then
+if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hooks/pre-push" && ! unsafe_path "$hooks/pre-push"; then
   chmod +x "$hooks/pre-push"
   echo "  導入済み（変更なし）: ${hooks}/pre-push"
 else
@@ -144,13 +162,18 @@ else
   echo "  入れました: ${hooks}/pre-push"
 fi
 
-# 実際に効く値を確かめる（システムの設定や GIT_CONFIG_* の環境変数で上書きされていると、ゲートが動かない）
+# 実際に効く値を確かめる（書き換える前の確認をすり抜けた上書きの最後の網）
 eff="$(cd / && git config --get core.hooksPath || true)"
 eff="${eff/#\~/$HOME}"
 if [ "$eff" != "$hooks" ]; then
   echo "== 失敗: 実際に効く core.hooksPath は ${eff:-（未設定）} で、フックを入れた ${hooks} と違うため、ゲートが動きません" >&2
-  echo "   システムの設定（git config --system）や GIT_CONFIG_COUNT などの環境変数を確かめてください" >&2
+  echo "   GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS などの環境変数や、~/.gitconfig の include を確かめてください" >&2
   exit 1
+fi
+
+# includeIf の中で core.hooksPath を設定していると、その条件に当たるリポジトリでは別の置き場所が使われる
+if (cd / && git config --global --get-regexp '^includeif\.' >/dev/null 2>&1); then
+  echo "== 注意: グローバルの設定に includeIf があります。その中で core.hooksPath を設定していると、条件に当たるリポジトリではゲートが動きません" >&2
 fi
 
 # 実行した場所がリポジトリで、リポジトリ単位の core.hooksPath があれば、そこではゲートが動かない

@@ -53,7 +53,7 @@ cd ai-review
 ./install.sh
 ```
 
-clone する場所は `~/.claude/skills/` の外にしてください（`~/.claude/skills/ai-review` の中から `install.sh` を実行すると、何もせずに止まります）。
+clone する場所は `~/.claude/skills/` の外にしてください（`~/.claude/skills/ai-review` の中から `install.sh` を実行すると、何もせずに止まります。`--hook-only` のときを除く）。
 
 `install.sh` は次の 3 つを行います。中身を読んでから実行してください。
 

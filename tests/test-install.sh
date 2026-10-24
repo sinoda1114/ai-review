@@ -111,7 +111,8 @@ echo "4k. 導入の後、実際に効く core.hooksPath が違えば知らせて
 rm -rf "$T/home8"; mkdir -p "$T/home8"
 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$T/elsewhere" \
   HOME="$T/home8" GIT_CONFIG_GLOBAL="$T/home8/.gitconfig" bash "$INSTALL" >"$T/out9" 2>&1; rc=$?
-[ $rc -ne 0 ] && grep -q "$T/elsewhere" "$T/out9" && ok "環境変数などで上書きされてゲートが効かないなら止まる" || ng "実効値の確認なし rc=$rc $(tail -2 "$T/out9")"
+[ $rc -ne 0 ] && grep -q "$T/elsewhere" "$T/out9" && [ ! -e "$T/home8/.gitconfig" ] && [ ! -e "$T/home8/.claude" ] && [ ! -e "$T/home8/.git-hooks" ] \
+  && ok "環境変数などで上書きされてゲートが効かないなら、何も書き換えずに止まる" || ng "実効値の確認 rc=$rc $(ls -a "$T/home8") $(tail -2 "$T/out9")"
 
 echo "4l. フックの置き場所を他人が書き換えられるなら止める"
 rm -rf "$T/home9"; mkdir -p "$T/home9/hooks"; chmod 777 "$T/home9/hooks"
@@ -127,8 +128,41 @@ echo "4m. 一時ファイルを置き場所に残さない"
 echo "4n. --hook-only はスキルを入れず、フックにこのリポジトリのスキルの場所を埋め込む"
 rm -rf "$T/home10"; mkdir -p "$T/home10"
 HOME="$T/home10" GIT_CONFIG_GLOBAL="$T/home10/.gitconfig" bash "$INSTALL" --hook-only >"$T/out11" 2>&1; rc=$?
-[ $rc -eq 0 ] && [ ! -e "$T/home10/.claude/skills/ai-review" ] && grep -qF "skill_dir=\"$root/skills/ai-review\"" "$T/home10/.git-hooks/pre-push" 2>/dev/null \
+[ $rc -eq 0 ] && [ ! -e "$T/home10/.claude/skills/ai-review" ] && grep -qF "skill_dir=\"$(cd "$root" && pwd -P)/skills/ai-review\"" "$T/home10/.git-hooks/pre-push" 2>/dev/null \
   && ok "プラグインと組み合わせても、スキルを二重に入れない" || ng "--hook-only: rc=$rc $(tail -2 "$T/out11")"
+
+HOME="$T/home10" GIT_CONFIG_GLOBAL="$T/home10/.gitconfig" bash "$INSTALL" --hook-only --copy >"$T/out11" 2>&1; rc=$?
+[ $rc -ne 0 ] && ok "--hook-only と --copy を一緒に付けると止まる" || ng "--hook-only --copy で続行した"
+
+echo "4p. umask 002 でも、自分で作った置き場所を 2 回目に拒まない"
+rm -rf "$T/home12"; mkdir -p "$T/home12"
+( umask 002; HOME="$T/home12" GIT_CONFIG_GLOBAL="$T/home12/.gitconfig" bash "$INSTALL" >"$T/out13" 2>&1 \
+  && HOME="$T/home12" GIT_CONFIG_GLOBAL="$T/home12/.gitconfig" bash "$INSTALL" >>"$T/out13" 2>&1 ); rc=$?
+[ $rc -eq 0 ] && [ -z "$(find "$T/home12/.git-hooks/." -maxdepth 0 -perm -0020)" ] && ok "作った置き場所はグループに書き込ませず、やり直しも通る" || ng "umask 002: rc=$rc $(tail -2 "$T/out13")"
+
+echo "4q. 置き場所がシンボリックリンクでも、リンク先の権限で判断する"
+rm -rf "$T/home13"; mkdir -p "$T/home13/real-hooks"; chmod 755 "$T/home13/real-hooks"; ln -s "$T/home13/real-hooks" "$T/home13/hooks"
+HOME="$T/home13" GIT_CONFIG_GLOBAL="$T/home13/.gitconfig" git config --global core.hooksPath "$T/home13/hooks"
+HOME="$T/home13" GIT_CONFIG_GLOBAL="$T/home13/.gitconfig" bash "$INSTALL" >"$T/out14" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -x "$T/home13/real-hooks/pre-push" ] && ok "本人の 755 のディレクトリへのリンクなら入れる" || ng "リンクの置き場所: rc=$rc $(tail -2 "$T/out14")"
+
+echo "4r. includeIf の中の core.hooksPath は、実行した場所に左右されない"
+rm -rf "$T/home14" "$T/src14"; mkdir -p "$T/home14/cond-hooks"; git init -q "$T/src14"
+printf '[core]\n\thooksPath = %s\n' "$T/home14/cond-hooks" > "$T/home14/cond.gitconfig"
+printf '[includeIf "gitdir:%s/"]\n\tpath = %s\n' "$(cd "$T/src14" && pwd -P)" "$T/home14/cond.gitconfig" > "$T/home14/.gitconfig"
+( cd "$T/src14" && HOME="$T/home14" GIT_CONFIG_GLOBAL="$T/home14/.gitconfig" bash "$INSTALL" >"$T/out15" 2>&1 ); rc=$?
+[ $rc -eq 0 ] && [ -x "$T/home14/.git-hooks/pre-push" ] && [ ! -e "$T/home14/cond-hooks/pre-push" ] && grep -q 'includeIf' "$T/out15" \
+  && ok "条件付きの値ではなく全体の置き場所に入れ、includeIf があることを知らせる" || ng "includeIf: rc=$rc $(tail -3 "$T/out15")"
+
+echo "4s. 中身が同じでも、他人が書き込める pre-push は置き直す"
+chmod 777 "$T/home/.git-hooks/pre-push"; inst
+[ -z "$(find "$T/home/.git-hooks/pre-push" -perm -0002)" ] && [ -x "$T/home/.git-hooks/pre-push" ] && ok "書き込める mode の pre-push を置き直す" || ng "777 のまま残った"
+
+echo "4t. 導入先のディレクトリに入れないとき、別の理由で止まったと誤って言わない"
+rm -rf "$T/home15"; mkdir -p "$T/home15/.claude/skills/ai-review"; chmod 000 "$T/home15/.claude/skills/ai-review"
+HOME="$T/home15" GIT_CONFIG_GLOBAL="$T/home15/.gitconfig" bash "$INSTALL" >"$T/out16" 2>&1; rc=$?
+chmod 755 "$T/home15/.claude/skills/ai-review"
+[ $rc -ne 0 ] && ! grep -q '中にあります' "$T/out16" && ok "入れないことを理由に止まる" || ng "誤った理由: rc=$rc $(tail -2 "$T/out16")"
 
 echo "4o. claude が無ければ何も書き換えずに止まる"
 mkdir -p "$T/bin-noclaude"; for c in git python3 dirname date sed mktemp; do p="$(command -v "$c")" && ln -sf "$p" "$T/bin-noclaude/$c"; done
