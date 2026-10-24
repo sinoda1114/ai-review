@@ -506,10 +506,17 @@ def carried_over(it):
 
 def carries_block(prev):
     """前回の記録に、次の周へ BLOCK を持ち越す項目があるか。
-    未再レビューの fixed の BLOCK も True にする。この記録とはつなぐが、heavy_fixed（tier == BLOCK）が拾って
-    次の周は全体レビューになるので block は消えない（heavy_fixed の条件を緩めるときは、ここも見直す）"""
+    未再レビューの fixed の BLOCK も True にする。heavy_fixed（tier == BLOCK）が拾って次の周は全体レビューに
+    なるので block は消えない（heavy_fixed の条件を緩めるときは、ここも見直す）"""
     return any(isinstance(it, dict) and it.get("tier") == "BLOCK" and carried_over(it)
                for it in prev.get("must_address") or [])
+
+
+def block_not_carried(prev):
+    """結論が block なのに、次の周へ BLOCK を持ち越す項目が無い記録か。差分レビューが引き継ぐのは項目だけなので、
+    この記録の次を差分レビューにすると block が消え、差分で何も出なければ pass になる（ai-review#5 の 9）。
+    チェーンは切らずに（深掘りの義務 chain_escalated や full_count を残すため）、次の周を全体にする"""
+    return prev.get("verdict") == "block" and not carries_block(prev)
 
 
 def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
@@ -527,9 +534,6 @@ def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
         # 深掘りを求められたのに済ませていない記録とはつながない（つなぐと、次の差分の記録で深掘りの義務が消える）
         and not (prev.get("escalate") is True and prev.get("escalation_done") is not True
                  and prev.get("skipped_by_user") is not True)
-        # 引き継げる BLOCK の項目が無い block の記録とはつながない（差分レビューが引き継ぐのは項目だけなので、
-        # つなぐと block が消え、差分で何も出なければ pass になる。ai-review#5 の 9）
-        and not (prev.get("verdict") == "block" and not carries_block(prev))
         and isinstance(prev.get("head_sha"), str)
         and bool(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", prev["head_sha"]))
         and prev_ancestor
@@ -590,6 +594,8 @@ def cmd_plan(a):
         # 差分レビューは「そのファイルが差分にあるか」までしか確かめられない。重い項目と、一度 open に戻した項目の
         # fixed は全体で確かめる（戻した項目は、差分レビューを続ける限り確かめられない）
         out["why"] = "BLOCK・高リスク・セキュリティ、または差分に入らなかった項目を fixed にしたので、全体で確かめる"
+    elif block_not_carried(prev):
+        out["why"] = "前回の結論は block だが、引き継げる BLOCK の項目が無い（差分レビューでは block を引き継げない）ので、全体を見る"
     elif large and prev.get("chain_size_escalated") is not True:
         # 規模による深掘りがまだのブランチは、深掘りが全体を見るように、この周を全体にする
         out["why"] = "ブランチ全体が規模の上限を超えたが、まだ規模による深掘りをしていないので、全体を深掘りする"
@@ -689,6 +695,9 @@ def cmd_record(a):
             die("前回の記録に、差分レビューでは確かめきれない fixed（%s）があります。"
                 "run-reviews.sh --full で全体をレビューしてから記録してください"
                 % ", ".join(str(it.get("id")) for it in heavy_fixed(prev, path_rules(a.rules or [])))[:200])
+        if scope["scope"] == "incremental" and block_not_carried(prev):
+            die("前回の記録の結論は block ですが、引き継げる BLOCK の項目がありません（差分レビューでは block を"
+                "引き継げません）。run-reviews.sh --full で全体をレビューしてから記録してください")
         if size_skipped and not chained:
             die("規模による昇格を飛ばした run ですが、前回の記録とつながりません（規模の判定は 1 周目に要る）")
         if (scope["scope"] == "full" and chained and prev.get("chain_escalated") is True
