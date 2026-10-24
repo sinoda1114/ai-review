@@ -383,28 +383,28 @@ fi
 # 見落とすと、そのファイルがある作業場所で Codex を起動してしまう（Codex は差分の外のファイルも読める）
 if [ -n "${since:-}" ] && [ -n "${full_base:-}" ] && [ -s "$out/escalation.json" ] && [ "${AI_REVIEW_DRY_RUN:-0}" != "1" -o "${AI_REVIEW_DRY_ESCALATION:-}" = "real" ]; then
   if ( cd "$repo_top" && "$script_dir/escalation-check.sh" --base "$full_base" --no-size ) > "$out/escalation-full.json" 2>> "$status"; then
-    "$py" -I -c 'import json,sys
+    "$py" -I -c 'import json,os,pathlib,sys
 d = json.load(open(sys.argv[1], encoding="utf-8")); f = json.load(open(sys.argv[2], encoding="utf-8"))
 sp = list(dict.fromkeys((d.get("secret_paths") or []) + (f.get("secret_paths") or [])))
 d["secret_paths"] = sp
-json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False)' "$out/escalation.json" "$out/escalation-full.json" 2>> "$status" ||
+t = sys.argv[1] + ".tmp"; pathlib.Path(t).write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8"); os.replace(t, sys.argv[1])' "$out/escalation.json" "$out/escalation-full.json" 2>> "$status" ||
       { echo "WARN: ブランチ全体の秘密情報の判定を足せなかった（Codex を起動しない）" >> "$status"; secret_full_failed=1
-        "$py" -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["secret_paths"]="?"; json.dump(d, open(p,"w"))' "$out/escalation.json"; }
+        "$py" -I -c 'import json,os,pathlib,sys; p=sys.argv[1]; d=json.load(open(p)); d["secret_paths"]="?"; pathlib.Path(p+".tmp").write_text(json.dumps(d)); os.replace(p+".tmp", p)' "$out/escalation.json"; }
   else
     echo "WARN: ブランチ全体の秘密情報の判定が失敗した（Codex を起動しない）" >> "$status"; secret_full_failed=1
-    "$py" -I -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["secret_paths"]="?"; json.dump(d, open(p,"w"))' "$out/escalation.json"
+    "$py" -I -c 'import json,os,pathlib,sys; p=sys.argv[1]; d=json.load(open(p)); d["secret_paths"]="?"; pathlib.Path(p+".tmp").write_text(json.dumps(d)); os.replace(p+".tmp", p)' "$out/escalation.json"
   fi
 fi
 # 1 周目で深掘りが加わったブランチの最後の全体レビュー（scope.json の force_escalation）は、深掘りを必ず加える
 if [ $security -eq 0 ] && [ -s "$out/escalation.json" ] && [ -s "$out/scope.json" ]; then
-  "$py" -I -c 'import json,sys
+  "$py" -I -c 'import json,os,pathlib,sys
 sc = json.load(open(sys.argv[1], encoding="utf-8"))
 if sc.get("force_escalation") is True:
     p = sys.argv[2]; d = json.load(open(p, encoding="utf-8"))
     d["escalate"] = True
     why = {"size": "F:size:ブランチ全体が規模の上限を超えたが、まだ規模による深掘りをしていない"}
     d["reasons"] = (d.get("reasons") or []) + [why.get(sc.get("force_reason"), "F:chain:1 周目で深掘りが加わったブランチの最後の全体レビュー")]
-    json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)' "$out/scope.json" "$out/escalation.json" 2>> "$status" ||
+    pathlib.Path(p + ".tmp").write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8"); os.replace(p + ".tmp", p)' "$out/scope.json" "$out/escalation.json" 2>> "$status" ||
     echo "WARN: 最後の全体レビューの深掘りを escalation.json に書けなかった" >> "$status"
 fi
 # 秘密情報のファイルが差分にあれば、外部モデル（Codex）を起動しない（エージェントの --no-codex に頼らない）。
