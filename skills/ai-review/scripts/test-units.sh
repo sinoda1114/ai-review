@@ -117,6 +117,12 @@ else ok "（大文字小文字を区別するファイルシステムなので�
 # HEAD の ref の中身が壊れていたら、「HEAD がまだ無い」と取り違えない
 mkrepo "$T/r7"; echo "garbage" > "$T/r7/.git/refs/heads/main"
 ( . "$here/reports-guard.sh"; reports_untrusted "$T/r7" ) && ok "壊れた ref の HEAD は信用しない" || ng "壊れた ref を「まだ無い」と取り違えた"
+# 生まれる前のブランチ（ほかのブランチにはコミットがある）は「読めない」ではなく、まだ無いと扱う
+mkrepo "$T/r8"; G -C "$T/r8" switch -q --orphan fresh 2>/dev/null || G -C "$T/r8" checkout -q --orphan fresh
+( . "$here/reports-guard.sh"; reports_unreadable "$T/r8" HEAD ) && ng "生まれる前のブランチを「読めない」とした" || ok "生まれる前のブランチは、読めないとは扱わない"
+# ref が全部壊れていても（ほかの ref が無い）、まだ無いと取り違えない
+mkrepo "$T/r9"; for r in "$T/r9/.git/refs/heads/"*; do echo garbage > "$r"; done; rm -f "$T/r9/.git/packed-refs"
+( . "$here/reports-guard.sh"; reports_unreadable "$T/r9" HEAD ) && ok "ref が全部壊れていたら読めないと扱う" || ng "ref が全部壊れたのを、まだ無いと取り違えた"
 # 一時ファイルの名前は予測できない
 ! grep -q '".tmp"' "$RR" && grep -q 'mkstemp' "$RR" && ok "run-reviews.sh の一時ファイルは mkstemp で作る" || ng "予測できる .tmp が残っている"
 

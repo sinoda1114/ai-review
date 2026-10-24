@@ -9,9 +9,12 @@
 # reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）
 reports_unreadable() {
   if ! git -C "$1" rev-parse -q --verify "$2" >/dev/null 2>&1; then
-    # 「まだ無い」と見なすのは、リポジトリにコミットが 1 つも無いときだけ（ref が壊れているときは信用しない）
-    local any; any="$(git -C "$1" rev-list -n 1 --all 2>/dev/null)" && [ -z "$any" ] && return 1
-    return 0
+    # 「まだ無い」と見なすのは、生まれる前のブランチ（HEAD が指す ref のファイルが無い）だけ。ref のファイルが
+    # あるのに解決できないとき（壊れている）や、HEAD が ref を指していないときは、読めないものとして信用しない
+    local ref; ref="$(git -C "$1" symbolic-ref -q "$2" 2>/dev/null)" || return 0
+    [ -e "$(git -C "$1" rev-parse --path-format=absolute --git-path "$ref" 2>/dev/null)" ] && return 0
+    git -C "$1" for-each-ref --format='%(refname)' "$ref" 2>/dev/null | grep -qxF "$ref" && return 0   # packed-refs にある
+    return 1
   fi
   git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1 || return 0   # 指す先はあるのに、コミットを読めない
   ! git -C "$1" ls-tree -r --name-only "$2" >/dev/null 2>&1
