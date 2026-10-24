@@ -988,10 +988,11 @@ echo 4 >> d91.js; G commit -qam dd1d
 run --out .review-reports/dd1d
 [ "$(sget .review-reports/dd1d/scope.json scope)" = "full" ] && ok "BLOCK の項目が無い block の記録の次は全体レビュー（DD1）" || ng "DD1: $(cat .review-reports/dd1d/scope.json)"
 printf '{"scope": "incremental", "since": "%s"}' "$hd1c" > .review-reports/dd1d/scope.json
+echo "$hd1c" > .review-reports/dd1d/reviewed_base.review
 if rec13 .review-reports/dd1d --verdict pass; then
   hook && ng "BLOCK の項目が無い block の記録につないだ差分レビューが pass になり、push を通した（DD1）" || ng "BLOCK の項目が無い block の記録につないで差分レビューを記録できた（DD1）"
 else
-  ok "BLOCK の項目が無い block の記録につなぐ差分レビューは記録しない（DD1）"
+  grep -q 'つながりません' "$T/rg.out" && ok "BLOCK の項目が無い block の記録につなぐ差分レビューは記録しない（DD1）" || ng "DD1 の記録が別の理由で止まった: $(cat "$T/rg.out")"
 fi
 # 再レビュー済みの fixed（引き継がれない）しか BLOCK の項目が無い block の記録も同じ
 cp "$T/dd1c.json" "$latest"
@@ -1004,8 +1005,22 @@ PY
 run --out .review-reports/dd1e
 [ "$(sget .review-reports/dd1e/scope.json scope)" = "full" ] && ok "BLOCK の項目が再レビュー済みの fixed だけの block の記録の次も全体レビュー（DD1）" || ng "DD1（再レビュー済み）: $(cat .review-reports/dd1e/scope.json)"
 printf '{"scope": "incremental", "since": "%s"}' "$hd1c" > .review-reports/dd1e/scope.json
-rec13 .review-reports/dd1e --verdict pass && ng "BLOCK の項目が再レビュー済みの fixed だけの block の記録につないで差分レビューを記録できた（DD1）" \
-  || ok "BLOCK の項目が再レビュー済みの fixed だけの block の記録につなぐ差分レビューも記録しない（DD1）"
+echo "$hd1c" > .review-reports/dd1e/reviewed_base.review
+if rec13 .review-reports/dd1e --verdict pass; then
+  ng "BLOCK の項目が再レビュー済みの fixed だけの block の記録につないで差分レビューを記録できた（DD1）"
+else
+  grep -q 'つながりません' "$T/rg.out" && ok "BLOCK の項目が再レビュー済みの fixed だけの block の記録につなぐ差分レビューも記録しない（DD1）" || ng "DD1（再レビュー済み）の記録が別の理由で止まった: $(cat "$T/rg.out")"
+fi
+# 未再レビューの fixed の BLOCK は持ち越す扱いでつなぐが、heavy_fixed で全体レビューになる（block は消えない）
+cp "$T/dd1c.json" "$latest"
+python3 - "$latest" <<'PY'
+import json,sys; p=sys.argv[1]; d=json.load(open(p))
+d["must_address"] = [{"id": "B0", "source": "own-review", "file": "d91.js", "line": 1, "tier": "BLOCK", "severity": "High",
+                      "summary": "x", "high_risk": False, "category": "correctness", "status": "fixed"}]
+json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
+PY
+run --out .review-reports/dd1f
+[ "$(sget .review-reports/dd1f/scope.json scope)" = "full" ] && ok "BLOCK の項目が未再レビューの fixed の block の記録の次は全体レビュー（DD1）" || ng "DD1（未再レビュー）: $(cat .review-reports/dd1f/scope.json)"
 # 引き継げる BLOCK の項目がある block の記録とは、これまでどおりつなぎ、block を項目ごと引き継ぐ
 G checkout -q -b d92 origin/main
 echo 1 > d93.js; echo 2 > d94.js; G add d93.js d94.js; G commit -qm big

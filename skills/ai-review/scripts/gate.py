@@ -505,7 +505,9 @@ def carried_over(it):
 
 
 def carries_block(prev):
-    """前回の記録に、次の周へ BLOCK を持ち越す項目があるか"""
+    """前回の記録に、次の周へ BLOCK を持ち越す項目があるか。
+    未再レビューの fixed の BLOCK も True にする。この記録とはつなぐが、heavy_fixed（tier == BLOCK）が拾って
+    次の周は全体レビューになるので block は消えない（heavy_fixed の条件を緩めるときは、ここも見直す）"""
     return any(isinstance(it, dict) and it.get("tier") == "BLOCK" and carried_over(it)
                for it in prev.get("must_address") or [])
 
