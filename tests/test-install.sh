@@ -86,7 +86,7 @@ mkdir -p "$T/we\"ird"; HOME="$T/we\"ird" GIT_CONFIG_GLOBAL="$T/we\"ird/.gitconfi
 [ $rc -ne 0 ] && ok "HOME に \" などを含むとフックに埋め込まずに止まる" || ng "記号入りのパスで続行した"
 
 echo "4g. 実行したリポジトリにリポジトリ単位の core.hooksPath があれば知らせる"
-rm -rf "$T/repo5"; git init -q "$T/repo5"; git -C "$T/repo5" config core.hooksPath .git/hooks
+rm -rf "$T/repo5"; GIT_CONFIG_GLOBAL=/dev/null git init -q "$T/repo5"; git -C "$T/repo5" config core.hooksPath .git/hooks
 ( cd "$T/repo5" && HOME="$T/home" GIT_CONFIG_GLOBAL="$T/home/.gitconfig" bash "$INSTALL" >"$T/out6" 2>&1 )
 grep -q 'core.hooksPath' "$T/out6" && grep -q 'ゲートが動きません' "$T/out6" && ok "このリポジトリではゲートが動かないと警告する" || ng "警告なし: $(tail -3 "$T/out6")"
 
@@ -149,7 +149,7 @@ HOME="$T/home13" GIT_CONFIG_GLOBAL="$T/home13/.gitconfig" bash "$INSTALL" >"$T/o
 [ $rc -eq 0 ] && [ -x "$T/home13/real-hooks/pre-push" ] && ok "本人の 755 のディレクトリへのリンクなら入れる" || ng "リンクの置き場所: rc=$rc $(tail -2 "$T/out14")"
 
 echo "4r. includeIf の中の core.hooksPath は、実行した場所に左右されない"
-rm -rf "$T/home14" "$T/src14"; mkdir -p "$T/home14/cond-hooks"; git init -q "$T/src14"
+rm -rf "$T/home14" "$T/src14"; mkdir -p "$T/home14/cond-hooks"; GIT_CONFIG_GLOBAL=/dev/null git init -q "$T/src14"
 printf '[core]\n\thooksPath = %s\n' "$T/home14/cond-hooks" > "$T/home14/cond.gitconfig"
 printf '[includeIf "gitdir:%s/"]\n\tpath = %s\n' "$(cd "$T/src14" && pwd -P)" "$T/home14/cond.gitconfig" > "$T/home14/.gitconfig"
 ( cd "$T/src14" && HOME="$T/home14" GIT_CONFIG_GLOBAL="$T/home14/.gitconfig" bash "$INSTALL" >"$T/out15" 2>&1 ); rc=$?

@@ -276,10 +276,10 @@ fi
 echo "== スキルの導入"
 if [ $hook_only -eq 1 ]; then
   echo "  入れません（--hook-only）。フックの案内文には ${src} の場所を書きます"
-  case "$src/" in
-    "$(cd "$dst" 2>/dev/null && pwd -P)"/*) inside_dst=1 ;;
-    *) inside_dst=0 ;;
-  esac
+  inside_dst=0
+  if real_dst="$(cd "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ]; then
+    case "$src/" in "$real_dst"/*) inside_dst=1 ;; esac
+  fi
   if { [ -e "$dst" ] || [ -L "$dst" ]; } && [ $inside_dst -eq 0 ]; then
     echo "  注意: ${dst} も残っています。プラグインと両方あるとスキルが 2 つ読み込まれるので、要らなければ消してください" >&2
   fi
@@ -311,7 +311,7 @@ else
   # 同じディレクトリに書いてから mv で置き換える（既存のフックがリンクでも、リンク先を書き換えない）
   tmp_hook="$(mktemp "$hooks/.pre-push.new.XXXXXX")"; cp "$new" "$tmp_hook"; chmod +x "$tmp_hook"
   # rename(2) で 1 回で置き換える。リンクは退避済みで、リンク自身を置き換える（mv はディレクトリへのリンクだとその中へ移す）
-  python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$tmp_hook" "$hooks/pre-push"; tmp_hook=""
+  (cd / && python3 -I -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$tmp_hook" "$hooks/pre-push"); tmp_hook=""
   echo "  入れました: ${hooks}/pre-push"
 fi
 # core.hooksPath はフックを置いた後に書く（途中で止まっても、ゲートの無い置き場所を指したままにしない）
