@@ -168,10 +168,18 @@ fi
 
 echo "4u. include 先のファイルにある includeIf も知らせる"
 rm -rf "$T/home16"; mkdir -p "$T/home16"
-printf '[includeIf "gitdir:/nowhere/"]\n\tpath = /nowhere.gitconfig\n' > "$T/home16/inc.gitconfig"
+printf '[core]\n\thooksPath = /nowhere/hooks\n' > "$T/home16/cond.gitconfig"
+printf '[includeIf "gitdir:/nowhere/"]\n\tpath = cond.gitconfig\n' > "$T/home16/inc.gitconfig"
 printf '[include]\n\tpath = %s\n' "$T/home16/inc.gitconfig" > "$T/home16/.gitconfig"
 HOME="$T/home16" GIT_CONFIG_GLOBAL="$T/home16/.gitconfig" bash "$INSTALL" >"$T/out17" 2>&1; rc=$?
 [ $rc -eq 0 ] && grep -q 'includeIf' "$T/out17" && ok "入れ子の includeIf も見つける" || ng "入れ子の includeIf: rc=$rc"
+
+echo "4u2. core.hooksPath を設定しない includeIf では知らせない"
+rm -rf "$T/home21"; mkdir -p "$T/home21"
+printf '[user]\n\temail = a@example.com\n' > "$T/home21/mail.gitconfig"
+printf '[includeIf "gitdir:/nowhere/"]\n\tpath = %s\n' "$T/home21/mail.gitconfig" > "$T/home21/.gitconfig"
+HOME="$T/home21" GIT_CONFIG_GLOBAL="$T/home21/.gitconfig" bash "$INSTALL" >"$T/out22" 2>&1; rc=$?
+[ $rc -eq 0 ] && ! grep -q 'includeIf' "$T/out22" && ok "関係のない includeIf では注意を出さない" || ng "余計な注意: rc=$rc"
 
 echo "4v. 置き場所がリンク先の無いシンボリックリンクなら、何も書き換えずに止まる"
 rm -rf "$T/home17"; mkdir -p "$T/home17"; ln -s "$T/home17/missing" "$T/home17/hooks"
@@ -184,6 +192,37 @@ rm -rf "$T/home18"; mkdir -p "$T/home18"
 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$T/home18/.git-hooks" \
   HOME="$T/home18" GIT_CONFIG_GLOBAL="$T/home18/.gitconfig" bash "$INSTALL" >"$T/out19" 2>&1; rc=$?
 [ $rc -eq 0 ] && [ -x "$T/home18/.git-hooks/pre-push" ] && ok "同じ値の上書きなら入れる" || ng "同じ値で止まった rc=$rc $(tail -2 "$T/out19")"
+
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0='~/.git-hooks/' \
+  HOME="$T/home18" GIT_CONFIG_GLOBAL="$T/home18/.gitconfig" bash "$INSTALL" >"$T/out19" 2>&1; rc=$?
+[ $rc -eq 0 ] && ok "~ や末尾の / が違うだけの同じ場所なら止めない" || ng "~ の上書きで止まった rc=$rc $(tail -2 "$T/out19")"
+
+echo "4v2. 置き場所が普通のファイルなら、何も書き換えずに止まる"
+rm -rf "$T/home22"; mkdir -p "$T/home22"; echo x > "$T/home22/hooks"
+HOME="$T/home22" GIT_CONFIG_GLOBAL="$T/home22/.gitconfig" git config --global core.hooksPath "$T/home22/hooks"
+HOME="$T/home22" GIT_CONFIG_GLOBAL="$T/home22/.gitconfig" bash "$INSTALL" >"$T/out23" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/home22/.claude" ] && ok "ファイルの置き場所では止まる" || ng "ファイルの置き場所: rc=$rc $(tail -2 "$T/out23")"
+
+echo "4y. 置き場所の親を他人が書き換えられるなら止める（スティッキービット付きは通す）"
+rm -rf "$T/home23"; mkdir -p "$T/home23/shared/hooks"; chmod 755 "$T/home23/shared/hooks"; chmod 777 "$T/home23/shared"
+HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" git config --global core.hooksPath "$T/home23/shared/hooks"
+HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/home23/shared/hooks/pre-push" ] && [ ! -e "$T/home23/.claude" ] && ok "グループが書き込める親の下には入れない" || ng "親の確認なし rc=$rc $(tail -2 "$T/out24")"
+chmod 1777 "$T/home23/shared"
+HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
+[ $rc -eq 0 ] && ok "スティッキービット付きの親（/tmp と同じ形）は通す" || ng "スティッキーで止まった rc=$rc $(tail -2 "$T/out24")"
+chmod 755 "$T/home23/shared"
+if [ "$(id -gn)" = "$(id -un)" ]; then
+  chgrp "$(id -g)" "$T/home23/shared"; chmod 775 "$T/home23/shared"
+  HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
+  [ $rc -eq 0 ] && ok "利用者の専用グループで書き込める親は通す（Ubuntu などの umask 002）" || ng "専用グループで止まった rc=$rc $(tail -2 "$T/out24")"
+  chmod 755 "$T/home23/shared"
+else
+  chgrp "$(id -g)" "$T/home23/shared"; chmod 775 "$T/home23/shared"
+  HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
+  [ $rc -ne 0 ] && ok "共有のグループ（$(id -gn)）で書き込める親は止める" || ng "共有のグループで通った"
+  chmod 755 "$T/home23/shared"
+fi
 
 echo "4x. 置き場所の途中の親も、umask 002 でグループに書き込ませない"
 rm -rf "$T/home19"; mkdir -p "$T/home19"

@@ -7,7 +7,7 @@
 # 使い方: ./install.sh [--force] [--copy] [--hook-only]
 #   --force      既存の別の pre-push フックがあっても、退避して入れる
 #   --copy       スキルをシンボリックリンクではなくコピーで入れる（このリポジトリを消す・動かす予定があるとき）
-#   --hook-only  スキルは入れず、フックだけを入れる（プラグインでスキルを入れたとき。フックはこのリポジトリのスキルを使う）
+#   --hook-only  スキルは入れず、フックだけを入れる（プラグインでスキルを入れたとき。フックの案内文には、このリポジトリのスキルの場所を書く）
 #
 # 何度実行しても同じ結果になる。本物の ~/.claude・~/.gitconfig を書き換えるので、内容を読んでから実行すること。
 # 競合などで止まるときは、何も書き換えない（確かめる処理をすべて先に行う）。
@@ -59,7 +59,7 @@ if [ $hook_only -eq 0 ] && [ -d "$dst" ] && [ ! -L "$dst" ]; then
   esac
 fi
 
-# フックに埋め込むパス。--hook-only ではこのリポジトリのスキルを使う
+# フックに埋め込むパス（案内文に使う）。--hook-only ではこのリポジトリのスキルの場所にする
 hook_skill="$dst"; [ $hook_only -eq 1 ] && hook_skill="$src"
 # フックの中では二重引用符の中に入るので、記号を含むパスは扱わない
 case "$hook_skill" in
@@ -69,15 +69,43 @@ case "$hook_skill" in
     exit 1 ;;
 esac
 
-unsafe_path() {  # 自分の持ち物でないか、グループ・他人が書き込めるなら真（-H でリンク先を見る）
-  [ ! -O "$1" ] || [ -n "$(find -H "$1" -maxdepth 0 \( -perm -0020 -o -perm -0002 \) 2>/dev/null)" ]
+# 利用者ごとの専用グループ（Ubuntu などの既定。グループ名が利用者名と同じ）なら、グループで書き込めても本人だけ
+personal_gid=""; if [ "$(id -gn)" = "$(id -un)" ]; then personal_gid="$(id -g)"; fi
+writable_by_others() {  # $1 を他人か、専用でないグループが書き込めるなら真（-H・-L でリンク先を見る）
+  [ -n "$(find -H "$1" -maxdepth 0 -perm -0002 2>/dev/null)" ] && return 0
+  [ -n "$(find -H "$1" -maxdepth 0 -perm -0020 2>/dev/null)" ] && [ "$(ls -ldnL "$1" | awk '{print $4}')" != "$personal_gid" ] && return 0
+  return 1
+}
+unsafe_path() {  # 自分の持ち物でないか、他人が書き込めるなら真
+  [ ! -O "$1" ] || writable_by_others "$1"
+}
+unsafe_parents() {  # 置き場所の親を / までたどり、他人が中身を入れ替えられる親があれば真
+  local d="$1" uid
+  if [ -e "$d" ]; then d="$(cd "$d" 2>/dev/null && pwd -P)" || return 0; d="$(dirname "$d")"
+  else
+    while [ ! -e "$d" ]; do d="$(dirname "$d")"; done   # まだ無いなら、作る場所になる一番近い親から
+    d="$(cd "$d" 2>/dev/null && pwd -P)" || return 0
+  fi
+  while :; do
+    # 本人か root の持ち物で、他人が書き込めない（またはスティッキービット付きの /tmp の形）なら安全
+    uid="$(ls -ldn "$d" | awk '{print $3}')"
+    [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || return 0
+    if [ -z "$(find -H "$d" -maxdepth 0 -perm -1000 2>/dev/null)" ] && writable_by_others "$d"; then return 0; fi
+    [ "$d" = / ] && return 1
+    d="$(dirname "$d")"
+  done
+}
+norm_path() {  # git と同じく先頭の ~ を展開し、末尾の / を落とす
+  local v="${1/#\~/$HOME}"
+  [ "$v" = / ] || v="${v%/}"
+  printf '%s' "$v"
 }
 
 # フックの置き場所を決める（まだ書き換えない）
 # --global では include を既定でたどらないので、--includes を付ける。
 # リポジトリの外（/）で読み、includeIf の条件で実行した場所ごとに値が変わらないようにする
 hooks="$(cd / && git config --global --includes --get core.hooksPath || true)"
-hooks="${hooks/#\~/$HOME}"
+hooks="$(norm_path "$hooks")"
 set_hooks_path=0
 if [ -z "$hooks" ]; then
   hooks="$HOME/.git-hooks"; set_hooks_path=1
@@ -94,13 +122,21 @@ if [ -L "$hooks" ] && [ ! -e "$hooks" ]; then
   echo "フックの置き場所（${hooks}）が、リンク先の無いシンボリックリンクです。リンク先を作るか、core.hooksPath を直してから実行してください。" >&2
   exit 1
 fi
+if [ -e "$hooks" ] && [ ! -d "$hooks" ]; then
+  echo "フックの置き場所（${hooks}）がディレクトリではありません。core.hooksPath を直してから実行してください。" >&2
+  exit 1
+fi
+if unsafe_parents "$hooks"; then
+  echo "フックの置き場所（${hooks}）の親に、自分か root の持ち物でないか、他人（専用でないグループを含む）が書き込めるディレクトリがあります。置き場所ごと差し替えられるので、権限を直すか別の場所にしてください。" >&2
+  exit 1
+fi
 if [ -e "$hooks" ] && unsafe_path "$hooks"; then
-  echo "フックの置き場所（${hooks}）が自分の持ち物でないか、グループ・他人が書き込めます。権限を直してから実行してください（例: chmod go-w ${hooks}）。" >&2
+  echo "フックの置き場所（${hooks}）が自分の持ち物でないか、他人（専用でないグループを含む）が書き込めます。権限を直してから実行してください（例: chmod go-w ${hooks}）。" >&2
   exit 1
 fi
 # global より強い指定（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS・git -c）があると、ここに入れてもゲートが動かない
 if scope="$(cd / && git config --show-scope --get core.hooksPath 2>/dev/null)" && [ "${scope%%$'\t'*}" = "command" ] \
-  && [ "${scope#*$'\t'}" != "$hooks" ]; then
+  && [ "$(norm_path "${scope#*$'\t'}")" != "$hooks" ]; then
   echo "core.hooksPath が環境変数（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS）か git -c で ${scope#*$'\t'} に上書きされていて、ゲートが動きません。外してから実行してください。" >&2
   exit 1
 fi
@@ -124,7 +160,7 @@ fi
 
 echo "== スキルの導入"
 if [ $hook_only -eq 1 ]; then
-  echo "  入れません（--hook-only）。フックは ${src} のスキルを使います"
+  echo "  入れません（--hook-only）。フックの案内文には ${src} の場所を書きます"
   if [ -e "$dst" ] || [ -L "$dst" ]; then
     echo "  注意: ${dst} も残っています。プラグインと両方あるとスキルが 2 つ読み込まれるので、要らなければ消してください" >&2
   fi
@@ -170,7 +206,7 @@ fi
 
 # 実際に効く値を確かめる（書き換える前の確認をすり抜けた上書きの最後の網）
 eff="$(cd / && git config --get core.hooksPath || true)"
-eff="${eff/#\~/$HOME}"
+eff="$(norm_path "$eff")"
 if [ "$eff" != "$hooks" ]; then
   echo "== 失敗: 実際に効く core.hooksPath は ${eff:-（未設定）} で、フックを入れた ${hooks} と違うため、ゲートが動きません" >&2
   echo "   GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS などの環境変数や、~/.gitconfig の include を確かめてください" >&2
@@ -179,8 +215,16 @@ if [ "$eff" != "$hooks" ]; then
 fi
 
 # includeIf の中で core.hooksPath を設定していると、その条件に当たるリポジトリでは別の置き場所が使われる
-if (cd / && git config --global --includes --get-regexp '^includeif\.' >/dev/null 2>&1); then
-  echo "== 注意: グローバルの設定に includeIf があります。その中で core.hooksPath を設定していると、条件に当たるリポジトリではゲートが動きません" >&2
+# includeIf の先のファイルを読み、core.hooksPath を設定しているものがあるときだけ知らせる
+cond_hp=0
+while IFS=$'\t' read -r origin kv; do
+  [ -n "$kv" ] || continue
+  f="$(norm_path "${kv#* }")"
+  case "$f" in /*) ;; *) f="$(dirname "${origin#file:}")/$f" ;; esac   # 相対パスは、書いてある設定ファイルからの位置
+  if [ -n "$(git config --file "$f" --includes --get core.hooksPath 2>/dev/null)" ]; then cond_hp=1; fi
+done < <(cd / && git config --global --includes --show-origin --get-regexp '^includeif\..*\.path$' 2>/dev/null || true)
+if [ $cond_hp -eq 1 ]; then
+  echo "== 注意: グローバルの設定の includeIf の先で core.hooksPath を設定しています。条件に当たるリポジトリでは、そちらの置き場所が使われてゲートが動きません" >&2
 fi
 
 # 実行した場所がリポジトリで、リポジトリ単位の core.hooksPath があれば、そこではゲートが動かない
