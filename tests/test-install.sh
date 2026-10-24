@@ -12,6 +12,8 @@ ok(){ echo "  PASS $1"; pass=$((pass+1)); }
 ng(){ echo "  FAIL $1"; fail=$((fail+1)); }
 # 本物のグローバル設定に触れないよう、GIT_CONFIG_GLOBAL を明示し XDG_CONFIG_HOME を外す
 unset XDG_CONFIG_HOME
+# git のフックの中などから呼ばれても、外側のリポジトリや設定に作用しないようにする
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 export GIT_CONFIG_NOSYSTEM=1
 # CLI の無い環境（CI など）でも動くよう、偽の claude・codex を PATH の先頭に置く
 mkdir -p "$T/bin"
@@ -318,6 +320,20 @@ rm -rf "$T/home37"; mkdir -p "$T/home37/.git-hooks"
 ( cd "$T/home37" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=.git-hooks \
   HOME="$T/home37" GIT_CONFIG_GLOBAL="$T/home37/.gitconfig" bash "$INSTALL" >"$T/out40" 2>&1 ); rc=$?
 [ $rc -ne 0 ] && [ ! -e "$T/home37/.claude" ] && ok "相対の上書きでは止まる" || ng "相対の上書き: rc=$rc"
+
+echo "4z10. グローバル設定を書けない・読めないなら、書き換える前に止まる"
+rm -rf "$T/home38"; mkdir -p "$T/home38"; : > "$T/home38/.gitconfig.lock"
+HOME="$T/home38" GIT_CONFIG_GLOBAL="$T/home38/.gitconfig" bash "$INSTALL" >"$T/out41" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/home38/.claude" ] && [ ! -e "$T/home38/.git-hooks" ] && grep -q 'gitconfig' "$T/out41" && ok ".lock が残っているときは何も書き換えない" || ng ".lock: rc=$rc $(ls -a "$T/home38" | tr '\n' ' ')"
+rm -rf "$T/home39"; mkdir -p "$T/home39"; printf '[core\n\tbroken\n' > "$T/home39/.gitconfig"
+HOME="$T/home39" GIT_CONFIG_GLOBAL="$T/home39/.gitconfig" bash "$INSTALL" >"$T/out42" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/home39/.claude" ] && grep -q '読めません' "$T/out42" && ok "壊れたグローバル設定では何も書き換えない" || ng "壊れた設定: rc=$rc $(tail -2 "$T/out42")"
+grep -q '^grep:' "$T/out36" && ng "壊れたリンクの pre-push で grep のエラーが出る" || ok "壊れたリンクの pre-push でも grep のエラーを出さない"
+
+echo "4z11. --copy で入れたスキルは、umask 002 でもグループに書き込ませない"
+rm -rf "$T/home40"; mkdir -p "$T/home40"
+( umask 002; HOME="$T/home40" GIT_CONFIG_GLOBAL="$T/home40/.gitconfig" bash "$INSTALL" --copy >"$T/out43" 2>&1 ); rc=$?
+[ $rc -eq 0 ] && [ -z "$(find "$T/home40/.claude/skills/ai-review" -perm -0020 | head -1)" ] && ok "コピーしたスキルはグループに書き込ませない" || ng "--copy の権限: rc=$rc"
 
 echo "4v3. パスの途中にリンク先の無いリンクがあれば、何も書き換えずに止まる"
 rm -rf "$T/home25"; mkdir -p "$T/home25"; ln -s "$T/home25/missing" "$T/home25/x"

@@ -12,7 +12,7 @@
 # 何度実行しても同じ結果になる。本物の ~/.claude・~/.gitconfig を書き換えるので、内容を読んでから実行すること。
 # 競合などで止まるときは、何も書き換えない（確かめる処理をすべて先に行う）。
 # 例外は 2 つ。止まる前に、フックの置き場所のディレクトリだけは作っていることがある（umask 022 で作る）。
-# また、最後の実効値の確認は、先の確認をすり抜けた上書きがあると、入れた後に止まる。
+# また、先の確認をすり抜けた失敗（設定の書き込みや最後の実効値の確認）は、入れた後に止まり、そのことを伝える。
 set -euo pipefail
 
 force=0; copy=0; hook_only=0
@@ -157,7 +157,12 @@ same_place() {  # 2 つの書き方が同じ場所を指すなら真（あるデ
 # フックの置き場所を決める（まだ書き換えない）
 # --global では include を既定でたどらないので、--includes を付ける。
 # リポジトリの外（/）で読み、includeIf の条件で実行した場所ごとに値が変わらないようにする
-hooks="$(cd / && git config --global --includes --get core.hooksPath || true)"
+# 終了コード 1 は「未設定」。それ以外（書式の誤り・読めない include など）は、書き換える前に止める
+hooks="$(cd / && git config --global --includes --get core.hooksPath)" && rc=0 || rc=$?
+if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then
+  echo "グローバルの git の設定を読めません（git config の終了コード ${rc}）。設定ファイルの書式と権限を確かめてから実行してください。" >&2
+  exit 1
+fi
 case "$hooks" in
   "~"|"~/"*) ;;
   "~"*) echo "グローバルの core.hooksPath の ~user の形（${hooks}）には対応していません。絶対パスで設定し直してから実行してください。" >&2; exit 1 ;;
@@ -166,6 +171,14 @@ hooks="$(norm_path "$hooks")"
 set_hooks_path=0
 if [ -z "$hooks" ]; then
   hooks="$HOME/.git-hooks"; set_hooks_path=1
+  # 後で core.hooksPath を書く設定ファイルに、書き換える前に書けることを確かめる（git と同じ選び方）
+  gcfg="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
+  xdg_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/git/config"
+  if [ -z "${GIT_CONFIG_GLOBAL:-}" ] && [ ! -e "$gcfg" ] && [ -e "$xdg_cfg" ]; then gcfg="$xdg_cfg"; fi
+  if [ -e "$gcfg.lock" ] || { [ -e "$gcfg" ] && [ ! -r "$gcfg" ]; } || [ ! -w "$(dirname "$gcfg")" ]; then
+    echo "グローバルの git の設定（${gcfg}）に書き込めません（${gcfg}.lock が残っているか、権限が足りません）。直してから実行してください。" >&2
+    exit 1
+  fi
 else
   case "$hooks" in
     /*) ;;
@@ -211,7 +224,7 @@ sed "s|__AI_REVIEW_SKILL_DIR__|$hook_skill|" "$src/hooks/pre-push" > "$new"
 bash -n "$new" || { echo "フックの組み立てに失敗しました" >&2; exit 1; }
 replace_hook=0
 if { [ -e "$hooks/pre-push" ] || [ -L "$hooks/pre-push" ]; } && ! cmp -s "$new" "$hooks/pre-push"; then
-  if ! grep -qxF "$MARK" "$hooks/pre-push" && [ $force -eq 0 ]; then
+  if ! grep -sqxF "$MARK" "$hooks/pre-push" && [ $force -eq 0 ]; then
     echo "別の pre-push フックがあります: $hooks/pre-push" >&2
     echo "中身を確かめてから --force で入れ直してください（元のフックは pre-push.bak.<時刻> に退避されます）。" >&2
     echo "リポジトリごとの .git/hooks/pre-push は、入れるフックが通った後に呼び継ぎます。" >&2
@@ -233,6 +246,10 @@ if [ ! -e "$hooks" ]; then
 fi
 if [ ! -w "$hooks" ] || [ ! -x "$hooks" ]; then
   echo "フックの置き場所（${hooks}）に書き込めません。権限を確かめてから実行してください。" >&2
+  exit 1
+fi
+if [ $replace_hook -eq 1 ] && [ ! -L "$hooks/pre-push" ] && [ ! -r "$hooks/pre-push" ]; then
+  echo "${hooks}/pre-push を読めないので、退避できません。権限を確かめてから実行してください。" >&2
   exit 1
 fi
 if [ $replace_hook -eq 1 ] && [ -d "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ]; then
@@ -258,7 +275,7 @@ else
     ( umask 022; mkdir -p "$backup_root" )
     mv "$dst" "$backup_root/ai-review.$ts"; echo "  既存の ${dst} を ${backup_root}/ai-review.${ts} に退避しました"
   fi
-  if [ $copy -eq 1 ]; then cp -R "$src" "$dst"; echo "  コピーしました: ${dst}"
+  if [ $copy -eq 1 ]; then ( umask 022; cp -R "$src" "$dst" ); echo "  コピーしました: ${dst}"
   else ln -s "$src" "$dst"; echo "  リンクしました: ${dst} → ${src}"; fi
 fi
 fi
@@ -277,7 +294,8 @@ else
 fi
 # core.hooksPath はフックを置いた後に書く（途中で止まっても、ゲートの無い置き場所を指したままにしない）
 if [ $set_hooks_path -eq 1 ]; then
-  git config --global core.hooksPath "$hooks"
+  git config --global core.hooksPath "$hooks" \
+    || { echo "== 失敗: core.hooksPath を書けませんでした（スキルとフックは入った状態です）。原因を直して、もう一度実行してください" >&2; exit 1; }
   echo "  core.hooksPath を ${hooks} に設定しました"
   echo "  （各リポジトリの .git/hooks/pre-push は、このフックが通った後に呼び継ぎます。pre-commit など他の種類のフックは動かなくなるので、使っている場合は ${hooks} に置いてください）"
 else
@@ -285,7 +303,11 @@ else
 fi
 
 # 実際に効く値を確かめる（書き換える前の確認をすり抜けた上書きの最後の網）
-eff="$(cd / && git config --get core.hooksPath || true)"
+eff="$(cd / && git config --get core.hooksPath)" && rc=0 || rc=$?
+if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then
+  echo "== 失敗: 導入の後に git の設定を読めません（終了コード ${rc}。スキルとフックは入った状態です）" >&2
+  exit 1
+fi
 eff="$(norm_path "$eff")"
 if ! same_place "$eff" "$hooks"; then
   echo "== 失敗: 実際に効く core.hooksPath は ${eff:-（未設定）} で、フックを入れた ${hooks} と違うため、ゲートが動きません" >&2
