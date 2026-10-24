@@ -733,6 +733,48 @@ run --out .review-reports/t5b; rec13 .review-reports/t5b --verdict pass >/dev/nu
 git config --unset core.quotePath
 [ "$(sget .review-reports/t5b/scope.json scope)" = "incremental" ] || ng "t5b が差分レビューにならない: $(cat .review-reports/t5b/scope.json)"
 case " $(ids) " in *" prev-J1:fixed "*) ok "日本語名のファイルを消して直した fixed も再レビュー済み（T5）" ;; *) ng "T5: $(ids)" ;; esac
+# T5n: 改行・末尾の空白・:行番号 を含む名前のファイルで、fixed のファイルが「差分にある」と見せかけない（ai-review#5 の 8）
+G checkout -q -b f8 origin/main
+echo 1 > n8.js; echo 2 > n9.js; G add n8.js n9.js; G commit -qm big
+run --out .review-reports/t5n1; rec13 .review-reports/t5n1 --verdict must-address --items "$(mk N1 n8.js MUST-ADDRESS correctness n false t5n)" >/dev/null 2>&1
+bash "$RI" --id N1 --fixed --note "直した（嘘）" >/dev/null 2>&1
+nlname="$(printf 'n8.js\nzz')"
+echo x > "$nlname"; echo x > 'n8.js '; echo x > 'n8.js:12'; G add -- "$nlname" 'n8.js ' 'n8.js:12'; G commit -qm trick
+run --out .review-reports/t5n2; rec13 .review-reports/t5n2 --verdict pass >/dev/null 2>&1
+[ "$(sget .review-reports/t5n2/scope.json scope)" = "incremental" ] || ng "t5n2 が差分レビューにならない: $(cat .review-reports/t5n2/scope.json)"
+case " $(ids) " in *" carry-N1:open "*) ok "改行・空白・:行番号 を含む名前のファイルでは、別のファイルの fixed を再レビュー済みにしない（T5n）" ;; *) ng "T5n: $(ids)" ;; esac
+# 逆向き: 変わった名前のファイルに付いた fixed を、普通の名前のファイルや CR と LF だけが違うファイルの変更で
+# 再レビュー済みにしない。実在しない「v8.js:3」のような書き方の揺れは、これまでどおり v8.js と照合する。
+# 書き方の揺れ（u8.js:3）と同じ名前のファイルを差分に足しても、u8.js の fixed を片づけたことにしない
+G checkout -q -b f9 origin/main
+lfname="$(printf 'c8\nzz.js')"; crname="$(printf 'c8\rzz.js')"
+echo 1 > w8.js; echo 2 > 'w8.js:12'; echo 3 > "$lfname"; echo 4 > v8.js; echo 5 > u8.js; G add -- w8.js 'w8.js:12' "$lfname" v8.js u8.js; G commit -qm big
+python3 - "$T/t5r.json" <<'PY'
+import json, sys
+it = lambda i, f: {"id": i, "source": "own-review", "file": f, "line": 1, "tier": "MUST-ADDRESS", "severity": "Medium",
+                   "category": "correctness", "summary": "x " + i, "high_risk": False}
+json.dump([it("B1", "w8.js:12"), it("C1", "c8\nzz.js"), it("V1", "v8.js:3"), it("U1", "u8.js:3")], open(sys.argv[1], "w"))
+PY
+run --out .review-reports/t5r1; rec13 .review-reports/t5r1 --verdict must-address --items "$T/t5r.json" >/dev/null 2>&1
+for i in B1 C1 V1 U1; do bash "$RI" --id $i --fixed --note "直した" >/dev/null 2>&1; done
+echo 5 >> w8.js; echo 6 > "$crname"; echo 7 >> v8.js; echo 8 > 'u8.js:3'; G add -- w8.js "$crname" v8.js 'u8.js:3'; G commit -qm trick2
+run --out .review-reports/t5r2; rec13 .review-reports/t5r2 --verdict pass >/dev/null 2>&1
+[ "$(sget .review-reports/t5r2/scope.json scope)" = "incremental" ] || ng "t5r2 が差分レビューにならない: $(cat .review-reports/t5r2/scope.json)"
+case " $(ids) " in *" carry-B1:open "*) ok "実在する w8.js:12 の fixed を、w8.js の変更で再レビュー済みにしない（T5n）" ;; *) ng "T5n（:行番号の逆向き）: $(ids)" ;; esac
+case " $(ids) " in *" carry-C1:open "*) ok "LF を含む名前の fixed を、CR だけが違う名前の変更で再レビュー済みにしない（T5n）" ;; *) ng "T5n（CR と LF）: $(ids)" ;; esac
+case " $(ids) " in *" prev-V1:fixed "*) ok "実在しない v8.js:3 は v8.js と照合し、変更があれば再レビュー済みにする（T5n）" ;; *) ng "T5n（書き方の揺れ）: $(ids)" ;; esac
+case " $(ids) " in *" carry-U1:open "*) ok "書き方の揺れ u8.js:3 と同じ名前のファイルを足しても、u8.js の fixed を再レビュー済みにしない（T5n）" ;; *) ng "T5n（揺れと同名のファイル）: $(ids)" ;; esac
+# 2 周に分けても同じ: 引き継いだ項目が指すファイルは、項目を最初に記録した周の木で決める（直前の周の木ではない）
+G checkout -q -b f10 origin/main
+echo 1 > x8.js; echo 2 > x9.js; G add x8.js x9.js; G commit -qm big
+run --out .review-reports/t5s1; rec13 .review-reports/t5s1 --verdict must-address --items "$(mk X1 'x8.js:12' MUST-ADDRESS correctness x false t5s)" >/dev/null 2>&1
+echo 3 > 'x8.js:12'; G add -- 'x8.js:12'; G commit -qm add-decoy
+run --out .review-reports/t5s2; rec13 .review-reports/t5s2 --verdict pass >/dev/null 2>&1
+bash "$RI" --id carry-X1 --fixed --note "直した（嘘）" >/dev/null 2>&1
+echo 4 >> 'x8.js:12'; G add -- 'x8.js:12'; G commit -qm touch-decoy
+run --out .review-reports/t5s3; rec13 .review-reports/t5s3 --verdict pass >/dev/null 2>&1
+[ "$(sget .review-reports/t5s3/scope.json scope)" = "incremental" ] || ng "t5s3 が差分レビューにならない: $(cat .review-reports/t5s3/scope.json)"
+case " $(ids) " in *" carry-X1:open "*) ok "間の周に足した同名のファイルで、引き継いだ項目の指す先をすり替えさせない（T5n）" ;; *) ng "T5n（2 周に分けたすり替え）: $(ids)" ;; esac
 # T6・T7: 引き継ぎだけでも must-address で記録でき、同じ run を記録し直せる
 G checkout -q -b f6 origin/main
 echo 1 > s1.js; echo 2 > s2.js; G add s1.js s2.js; G commit -qm big
