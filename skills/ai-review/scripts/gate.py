@@ -498,10 +498,15 @@ def read_json(path):
     return d if isinstance(d, dict) else {}
 
 
+def carried_over(it):
+    """前回の記録の項目が、次の周の記録に持ち越されるか（再レビュー済みの fixed だけは持ち越さない）。
+    cmd_record の引き継ぎと carries_block の両方がこれを使う（片方だけ変えると block が消える穴が戻る）"""
+    return not (it.get("status") == "fixed" and it.get("re_reviewed_sha"))
+
+
 def carries_block(prev):
-    """前回の記録に、次の周へ BLOCK を持ち越す項目があるか（再レビュー済みの fixed は引き継がれないので数えない）"""
-    return any(isinstance(it, dict) and it.get("tier") == "BLOCK"
-               and not (it.get("status") == "fixed" and it.get("re_reviewed_sha"))
+    """前回の記録に、次の周へ BLOCK を持ち越す項目があるか"""
+    return any(isinstance(it, dict) and it.get("tier") == "BLOCK" and carried_over(it)
                for it in prev.get("must_address") or [])
 
 
@@ -784,7 +789,7 @@ def cmd_record(a):
                 c["re_reviewed_sha"] = a.head
                 c["previous_head_sha"] = prev.get("head_sha")
                 prev_fixed.append(c)
-            elif incremental and not (it.get("status") == "fixed" and it.get("re_reviewed_sha")):
+            elif incremental and carried_over(it):
                 # 差分レビューは前回より前のコードを見直さないので、同じ指摘は出直さない。
                 # 片づいていない項目（と、片づいた accepted）を引き継いで落とさない
                 c = dict(it)

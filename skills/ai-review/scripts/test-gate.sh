@@ -1003,6 +1003,9 @@ json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
 PY
 run --out .review-reports/dd1e
 [ "$(sget .review-reports/dd1e/scope.json scope)" = "full" ] && ok "BLOCK の項目が再レビュー済みの fixed だけの block の記録の次も全体レビュー（DD1）" || ng "DD1（再レビュー済み）: $(cat .review-reports/dd1e/scope.json)"
+printf '{"scope": "incremental", "since": "%s"}' "$hd1c" > .review-reports/dd1e/scope.json
+rec13 .review-reports/dd1e --verdict pass && ng "BLOCK の項目が再レビュー済みの fixed だけの block の記録につないで差分レビューを記録できた（DD1）" \
+  || ok "BLOCK の項目が再レビュー済みの fixed だけの block の記録につなぐ差分レビューも記録しない（DD1）"
 # 引き継げる BLOCK の項目がある block の記録とは、これまでどおりつなぎ、block を項目ごと引き継ぐ
 G checkout -q -b d92 origin/main
 echo 1 > d93.js; echo 2 > d94.js; G add d93.js d94.js; G commit -qm big
