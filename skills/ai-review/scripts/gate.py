@@ -994,6 +994,9 @@ def cmd_check(a):
         print("-\t-\t-\tverdict=must-address なのに項目が無い（記録が壊れている）")
         sys.exit(1)
     for it in bad:
+        if not isinstance(it, dict):  # 項目の形が壊れている（表示で落ちない）
+            print("-\t-\t-\t項目の形が不正（記録が壊れている）")
+            continue
         why = {
             "open": "未処理",
             "fixed": "fixed と記録済み。commit して /ai-review を再実行する",

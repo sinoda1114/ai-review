@@ -106,6 +106,21 @@ HOME="$T/home7" GIT_CONFIG_GLOBAL="$T/home7/.gitconfig" bash "$INSTALL" >"$T/out
 [ $rc -eq 0 ] && [ -x "$T/home7/hooks/pre-push" ] && ! grep -q '^\[core\]' "$T/home7/.gitconfig" \
   && ok "include 先の core.hooksPath に置き、別の値を書き足さない" || ng "include: rc=$rc $(ls "$T/home7"/hooks 2>&1) $(cat "$T/home7/.gitconfig")"
 
+echo "4j2. includeIf の値は、実行した場所のリポジトリで判定しない（グローバルの値と取り違えない）"
+rm -rf "$T/home9" "$T/repo9"; mkdir -p "$T/home9"; git init -q "$T/repo9"
+printf '[core]\n\thooksPath = %s\n' "$T/home9/only-here" > "$T/home9/cond.gitconfig"
+printf '[includeIf "gitdir:%s/"]\n\tpath = %s\n' "$(cd "$T/repo9" && pwd -P)" "$T/home9/cond.gitconfig" > "$T/home9/.gitconfig"   # 実際のパスで（/var は /private/var へのリンク）
+( cd "$T/repo9" && HOME="$T/home9" GIT_CONFIG_GLOBAL="$T/home9/.gitconfig" bash "$INSTALL" >"$T/out11" 2>&1 ); rc=$?
+eff9="$(cd "$T/repo9" && HOME="$T/home9" GIT_CONFIG_GLOBAL="$T/home9/.gitconfig" git config --get core.hooksPath)"
+[ $rc -eq 0 ] && [ -x "$T/home9/.git-hooks/pre-push" ] && [ ! -e "$T/home9/only-here/pre-push" ] && [ "$eff9" = "$T/home9/.git-hooks" ] \
+  && ok "includeIf の値ではなく、グローバルの置き場所に入れる（そのリポジトリでも効く）" || ng "includeIf: rc=$rc eff=$eff9 $(ls -a "$T/home9" 2>&1 | tr '\n' ' ')"
+
+echo "4j3. 導入先に入れないときは、取り違えて止まらずに、そう知らせる"
+rm -rf "$T/home10"; mkdir -p "$T/home10/.claude/skills/ai-review"; chmod 000 "$T/home10/.claude/skills/ai-review"
+HOME="$T/home10" GIT_CONFIG_GLOBAL="$T/home10/.gitconfig" bash "$INSTALL" >"$T/out12" 2>&1; rc=$?
+chmod 755 "$T/home10/.claude/skills/ai-review"
+! grep -q 'このリポジトリが導入先の中にあります' "$T/out12" && ok "導入先に入れなくても「導入先の中」と取り違えない" || ng "取り違えた: $(tail -2 "$T/out12")"
+
 echo "4k. フックの一時ファイルの名前は予測できない"
 ! grep -q 'pre-push.new.\$\$' "$INSTALL" && ok "一時ファイルを mktemp で作る" || ng "PID の一時ファイル名が残っている"
 

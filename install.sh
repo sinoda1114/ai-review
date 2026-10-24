@@ -48,8 +48,9 @@ backup_root="$HOME/.claude/ai-review-backup"   # skills の外に退避する（
 
 # 導入先の中にこのリポジトリを clone して実行すると、導入先を退避するときにリポジトリごと動かしてしまう
 if [ $hook_only -eq 0 ] && [ -d "$dst" ] && [ ! -L "$dst" ]; then
+  dst_real="$(cd "$dst" 2>/dev/null && pwd -P)" || { echo "導入先に入れません（権限を確かめてください）: ${dst}" >&2; exit 1; }
   case "$repo/" in
-    "$(cd "$dst" && pwd -P)"/*)
+    "$dst_real"/*)
       echo "このリポジトリが導入先の中にあります: ${repo}" >&2
       echo "導入先（${dst}）の外に clone し直して実行するか、スキルは今のまま使い、--hook-only でフックだけを入れてください。" >&2
       exit 1 ;;
@@ -62,8 +63,10 @@ case "$embed" in
   *[!A-Za-z0-9/._\ -]*) echo "スキルの場所に扱えない文字が含まれます: ${embed}（英数字・/._- と空白のみ対応）" >&2; exit 1 ;;
 esac
 
-# フックの置き場所を決める（まだ書き換えない）。include で書いた設定もたどる
-hooks="$(git config --global --includes --get core.hooksPath || true)"
+# フックの置き場所を決める（まだ書き換えない）。include で書いた設定もたどる。
+# リポジトリの外（/）で読む: リポジトリの中で読むと、includeIf "gitdir:…" をそのリポジトリで判定し、
+# その場所でだけ効く値をグローバルの値と取り違える（ほかのリポジトリではゲートが効かなくなる）
+hooks="$(cd / && GIT_CEILING_DIRECTORIES=/ git config --global --includes --get core.hooksPath || true)"
 hooks="${hooks/#\~/$HOME}"
 set_hooks_path=0
 if [ -z "$hooks" ]; then

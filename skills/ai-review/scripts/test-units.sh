@@ -38,6 +38,14 @@ else
   ng "check の出力: rc=$rc $out"
 fi
 
+# 項目が壊れていても（dict でない）、表示で落ちない
+cat > "$T/latest2.json" <<'JSON'
+{"version": 3, "head_sha": "h", "mode": "branch", "verdict": "must-address", "scope": "incremental", "full_count": 1,
+ "must_address": ["壊れた項目"]}
+JSON
+out="$(python3 "$GP" check --latest "$T/latest2.json" --head h 2>&1)"; rc=$?
+[ $rc -eq 1 ] && ! printf '%s' "$out" | grep -q Traceback && ok "壊れた項目でも check は落ちずに止める" || ng "check: rc=$rc $(printf '%s' "$out" | tail -2)"
+
 echo "2. run-reviews.sh"
 # escalation.json の書き換えは、一時ファイルに書いてから置き換える（途中で失敗しても中途半端なファイルを残さない）
 n="$(grep -c 'json.dump(d, open(' "$RR")"
