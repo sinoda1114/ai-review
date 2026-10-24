@@ -4,20 +4,22 @@
 #   2. スキルを ~/.claude/skills/ai-review として入れる（このリポジトリへのシンボリックリンク）
 #   3. git の pre-push フック（push 前のゲート）を、グローバルの core.hooksPath に置く
 #
-# 使い方: ./install.sh [--force] [--copy]
-#   --force  既存の別の pre-push フックがあっても、退避して入れる
-#   --copy   スキルをシンボリックリンクではなくコピーで入れる（このリポジトリを消す・動かす予定があるとき）
+# 使い方: ./install.sh [--force] [--copy] [--hook-only]
+#   --force      既存の別の pre-push フックがあっても、退避して入れる
+#   --copy       スキルをシンボリックリンクではなくコピーで入れる（このリポジトリを消す・動かす予定があるとき）
+#   --hook-only  スキルは入れず、フックだけを入れる（プラグインでスキルを入れたとき。フックはこのリポジトリのスキルを使う）
 #
 # 何度実行しても同じ結果になる。本物の ~/.claude・~/.gitconfig を書き換えるので、内容を読んでから実行すること。
 # 競合などで止まるときは、何も書き換えない（確かめる処理をすべて先に行う）。
 set -euo pipefail
 
-force=0; copy=0
+force=0; copy=0; hook_only=0
 for a in "$@"; do
   case "$a" in
     --force) force=1 ;;
     --copy) copy=1 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    --hook-only) hook_only=1 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown option: ${a}" >&2; exit 2 ;;
   esac
 done
@@ -44,13 +46,25 @@ check codex 任意 "Codex CLI。無いと Claude 側だけになり、毎回「�
 skills="$HOME/.claude/skills"; dst="$skills/ai-review"
 backup_root="$HOME/.claude/ai-review-backup"   # skills の外に退避する（skills の中だと二重に読み込まれる）
 
-# フックに埋め込むパス。フックの中では二重引用符の中に入るので、記号を含むパスは扱わない
-case "$dst" in
-  *[!A-Za-z0-9/._\ -]*) echo "スキルの導入先に扱えない文字が含まれます: ${dst}（英数字・/._- と空白のみ対応）" >&2; exit 1 ;;
+# 導入先に直接 clone したリポジトリから実行すると、リポジトリ自身を退避してしまう
+if [ $hook_only -eq 0 ] && [ -d "$dst" ] && [ ! -L "$dst" ]; then
+  case "$src/" in
+    "$(cd "$dst" && pwd -P)"/*)
+      echo "このリポジトリがスキルの導入先（${dst}）の中にあります。~/.claude/skills の外に clone し直してから実行してください。" >&2
+      exit 1 ;;
+  esac
+fi
+
+# フックに埋め込むパス。--hook-only ではこのリポジトリのスキルを使う
+hook_skill="$dst"; [ $hook_only -eq 1 ] && hook_skill="$src"
+# フックの中では二重引用符の中に入るので、記号を含むパスは扱わない
+case "$hook_skill" in
+  *[!A-Za-z0-9/._\ -]*) echo "スキルの場所に扱えない文字が含まれます: ${hook_skill}（英数字・/._- と空白のみ対応）" >&2; exit 1 ;;
 esac
 
 # フックの置き場所を決める（まだ書き換えない）
-hooks="$(git config --global --get core.hooksPath || true)"
+# --global では include を既定でたどらないので、--includes を付ける
+hooks="$(git config --global --includes --get core.hooksPath || true)"
 hooks="${hooks/#\~/$HOME}"
 set_hooks_path=0
 if [ -z "$hooks" ]; then
@@ -63,11 +77,17 @@ else
        exit 1 ;;
   esac
 fi
+# 置き場所をグループや他人が書き換えられると、フックを差し替えられる
+if [ -e "$hooks" ] && { [ ! -O "$hooks" ] || [ -n "$(find "$hooks" -maxdepth 0 \( -perm -0020 -o -perm -0002 \) 2>/dev/null)" ]; }; then
+  echo "フックの置き場所（${hooks}）が自分の持ち物でないか、グループ・他人が書き込めます。権限を直してから実行してください（例: chmod go-w ${hooks}）。" >&2
+  exit 1
+fi
 
 # 入れるフックを用意し、既存のフックとの競合を確かめる（まだ書き換えない）
 new="$(mktemp "${TMPDIR:-/tmp}/ai-review-pre-push.XXXXXX")"
-trap 'rm -f "$new"' EXIT
-sed "s|__AI_REVIEW_SKILL_DIR__|$dst|" "$src/hooks/pre-push" > "$new"
+tmp_hook=""
+trap 'rm -f "$new" ${tmp_hook:+"$tmp_hook"}' EXIT
+sed "s|__AI_REVIEW_SKILL_DIR__|$hook_skill|" "$src/hooks/pre-push" > "$new"
 bash -n "$new" || { echo "フックの組み立てに失敗しました" >&2; exit 1; }
 replace_hook=0
 if [ -e "$hooks/pre-push" ] && ! cmp -s "$new" "$hooks/pre-push"; then
@@ -81,6 +101,12 @@ if [ -e "$hooks/pre-push" ] && ! cmp -s "$new" "$hooks/pre-push"; then
 fi
 
 echo "== スキルの導入"
+if [ $hook_only -eq 1 ]; then
+  echo "  入れません（--hook-only）。フックは ${src} のスキルを使います"
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    echo "  注意: ${dst} も残っています。プラグインと両方あるとスキルが 2 つ読み込まれるので、要らなければ消してください" >&2
+  fi
+else
 mkdir -p "$skills"
 same=0
 if [ $copy -eq 0 ] && [ -L "$dst" ] && [ "$(cd "$dst" && pwd -P)" = "$(cd "$src" && pwd -P)" ]; then same=1; fi
@@ -94,6 +120,7 @@ else
   fi
   if [ $copy -eq 1 ]; then cp -R "$src" "$dst"; echo "  コピーしました: ${dst}"
   else ln -s "$src" "$dst"; echo "  リンクしました: ${dst} → ${src}"; fi
+fi
 fi
 
 echo "== pre-push フックの導入"
@@ -113,8 +140,17 @@ if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hoo
   echo "  導入済み（変更なし）: ${hooks}/pre-push"
 else
   # 同じディレクトリに書いてから mv で置き換える（既存のフックがリンクでも、リンク先を書き換えない）
-  tmp_hook="$hooks/.pre-push.new.$$"; cp "$new" "$tmp_hook"; chmod +x "$tmp_hook"; mv -f "$tmp_hook" "$hooks/pre-push"
+  tmp_hook="$(mktemp "$hooks/.pre-push.new.XXXXXX")"; cp "$new" "$tmp_hook"; chmod +x "$tmp_hook"; mv -f "$tmp_hook" "$hooks/pre-push"; tmp_hook=""
   echo "  入れました: ${hooks}/pre-push"
+fi
+
+# 実際に効く値を確かめる（システムの設定や GIT_CONFIG_* の環境変数で上書きされていると、ゲートが動かない）
+eff="$(cd / && git config --get core.hooksPath || true)"
+eff="${eff/#\~/$HOME}"
+if [ "$eff" != "$hooks" ]; then
+  echo "== 失敗: 実際に効く core.hooksPath は ${eff:-（未設定）} で、フックを入れた ${hooks} と違うため、ゲートが動きません" >&2
+  echo "   システムの設定（git config --system）や GIT_CONFIG_COUNT などの環境変数を確かめてください" >&2
+  exit 1
 fi
 
 # 実行した場所がリポジトリで、リポジトリ単位の core.hooksPath があれば、そこではゲートが動かない

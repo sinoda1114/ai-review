@@ -53,7 +53,7 @@ cd ai-review
 ./install.sh
 ```
 
-clone する場所は `~/.claude/skills/` の外にしてください（`~/.claude/skills/ai-review` に直接 clone して `install.sh` を実行すると、リポジトリ自身を退避してしまいます）。
+clone する場所は `~/.claude/skills/` の外にしてください（`~/.claude/skills/ai-review` の中から `install.sh` を実行すると、何もせずに止まります）。
 
 `install.sh` は次の 3 つを行います。中身を読んでから実行してください。
 
@@ -68,7 +68,9 @@ clone する場所は `~/.claude/skills/` の外にしてください（`~/.clau
 /plugin install ai-review@ai-review
 ```
 
-プラグインで入るのはスキルだけです。**pre-push フックは入らない**ので、止める仕組みが要るなら `install.sh` も実行するか、`skills/ai-review/hooks/pre-push` を自分で置いてください。
+プラグインで入るのはスキルだけです。**pre-push フックは入らない**ので、止める仕組みが要るなら、このリポジトリを clone して `./install.sh --hook-only` を実行してください。フックだけを入れ、フックはその clone のスキルを使います。
+
+`--hook-only` を付けずに `install.sh` を実行すると、`~/.claude/skills/ai-review` にもスキルが入り、プラグインと合わせて 2 つ読み込まれます。プラグインを使うなら、どちらか一方にしてください。
 
 ## 使い方
 
