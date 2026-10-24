@@ -764,6 +764,17 @@ case " $(ids) " in *" carry-B1:open "*) ok "実在する w8.js:12 の fixed を�
 case " $(ids) " in *" carry-C1:open "*) ok "LF を含む名前の fixed を、CR だけが違う名前の変更で再レビュー済みにしない（T5n）" ;; *) ng "T5n（CR と LF）: $(ids)" ;; esac
 case " $(ids) " in *" prev-V1:fixed "*) ok "実在しない v8.js:3 は v8.js と照合し、変更があれば再レビュー済みにする（T5n）" ;; *) ng "T5n（書き方の揺れ）: $(ids)" ;; esac
 case " $(ids) " in *" carry-U1:open "*) ok "書き方の揺れ u8.js:3 と同じ名前のファイルを足しても、u8.js の fixed を再レビュー済みにしない（T5n）" ;; *) ng "T5n（揺れと同名のファイル）: $(ids)" ;; esac
+# 2 周に分けても同じ: 引き継いだ項目が指すファイルは、項目を最初に記録した周の木で決める（直前の周の木ではない）
+G checkout -q -b f10 origin/main
+echo 1 > x8.js; echo 2 > x9.js; G add x8.js x9.js; G commit -qm big
+run --out .review-reports/t5s1; rec13 .review-reports/t5s1 --verdict must-address --items "$(mk X1 'x8.js:12' MUST-ADDRESS correctness x false t5s)" >/dev/null 2>&1
+echo 3 > 'x8.js:12'; G add -- 'x8.js:12'; G commit -qm add-decoy
+run --out .review-reports/t5s2; rec13 .review-reports/t5s2 --verdict pass >/dev/null 2>&1
+bash "$RI" --id carry-X1 --fixed --note "直した（嘘）" >/dev/null 2>&1
+echo 4 >> 'x8.js:12'; G add -- 'x8.js:12'; G commit -qm touch-decoy
+run --out .review-reports/t5s3; rec13 .review-reports/t5s3 --verdict pass >/dev/null 2>&1
+[ "$(sget .review-reports/t5s3/scope.json scope)" = "incremental" ] || ng "t5s3 が差分レビューにならない: $(cat .review-reports/t5s3/scope.json)"
+case " $(ids) " in *" carry-X1:open "*) ok "間の周に足した同名のファイルで、引き継いだ項目の指す先をすり替えさせない（T5n）" ;; *) ng "T5n（2 周に分けたすり替え）: $(ids)" ;; esac
 # T6・T7: 引き継ぎだけでも must-address で記録でき、同じ run を記録し直せる
 G checkout -q -b f6 origin/main
 echo 1 > s1.js; echo 2 > s2.js; G add s1.js s2.js; G commit -qm big

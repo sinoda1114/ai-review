@@ -122,6 +122,8 @@ def _repo_path(f):
 
 def _in_tree(rev, path):
     """path が rev の木にあるか。git が失敗したら None（呼び出し側は「分からない」を安全な側に倒す）"""
+    if not (isinstance(rev, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", rev)):
+        return None  # 記録から読んだ値なので、SHA の形でなければ git に渡さない
     if "\0" in path:
         return False  # NUL を含む名前のファイルは作れない
     import subprocess
@@ -135,16 +137,16 @@ def _in_tree(rev, path):
     return path.encode("utf-8", "surrogateescape") in r.stdout.split(b"\0")
 
 
-def _in_diff(f, changed, prev_head):
+def _in_diff(f, changed, item_head):
     """項目の file が、差分の一覧（git が出した生のパスの集合）にあるか。
-    項目が指すファイルを、項目を記録した前回の記録の木（prev_head）で 1 つに決めてから比べる。整形しない形
+    項目が指すファイルを、項目を最初に記録したときの木（item_head）で 1 つに決めてから比べる。整形しない形
     （絶対パスと ./ だけ外す）がその木にあればそれ、無ければ整形（空白・:行番号・装飾を外す）した形。
     整形した形と整形しない形の両方で比べると、変わった名前のファイル（`n8.js:12`）を足したり、それに付いた
     fixed を `n8.js` の変更で片づけたりして、確かめていない fixed を再レビュー済みにできる（ai-review#5 の 8）。
     git で決められなければ一致にしない（fixed は open に戻る）"""
     f = f or ""
     raw = re.sub(r"^\./", "", _strip_root(f))
-    exists = _in_tree(prev_head, raw)
+    exists = _in_tree(item_head, raw)
     if exists is None:
         return False
     return (raw if exists else _repo_path(f)) in changed
@@ -825,12 +827,15 @@ def cmd_record(a):
             if not isinstance(it, dict):
                 continue
             if (it.get("status") == "fixed" and not it.get("re_reviewed_sha") and incremental
-                    and not _in_diff(it.get("file"), changed, prev["head_sha"])):
+                    and not _in_diff(it.get("file"), changed, it.get("item_head") or prev["head_sha"])):
                 # 差分レビューは差分の中しか見ないので、差分にそのファイルが無い fixed は確かめられていない。
                 # 再レビュー済みにせず、open に戻して引き継ぐ（偽の fixed で BLOCK・高リスクを抜けさせない）
                 c = dict(it, status="open")
                 c["id"] = carry_id(it.get("id"))
                 c["carried_from"] = prev.get("head_sha")
+                # 項目を最初に記録した HEAD は上書きせずに持ち回る（_in_diff は、項目が指すファイルをその木で決める。
+                # 直前の記録の木で決めると、間の周に足した同名のファイルで指す先をすり替えられる）
+                c["item_head"] = it.get("item_head") or prev.get("head_sha")
                 c["note"] = "fixed だったが、差分レビューの差分にこのファイルが無いので確かめられていない"
                 c["reopened"] = True  # また fixed にしたら、次の周は全体で確かめる（heavy_fixed）
                 carried.append(c)
@@ -846,6 +851,9 @@ def cmd_record(a):
                 c = dict(it)
                 c["id"] = carry_id(it.get("id"))
                 c["carried_from"] = prev.get("head_sha")
+                # 項目を最初に記録した HEAD は上書きせずに持ち回る（_in_diff は、項目が指すファイルをその木で決める。
+                # 直前の記録の木で決めると、間の周に足した同名のファイルで指す先をすり替えられる）
+                c["item_head"] = it.get("item_head") or prev.get("head_sha")
                 if c.get("status") == "accepted":
                     # 理由が差分のどこ（別のファイルの呼び出し元など）に依存するかは機械では分からない。
                     # HEAD が進んだので、検証と人の承認をやり直す（理由そのものは残す）
