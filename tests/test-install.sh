@@ -124,6 +124,16 @@ chmod 755 "$T/home10/.claude/skills/ai-review"
 echo "4k. フックの一時ファイルの名前は予測できない"
 ! grep -q 'pre-push.new.\$\$' "$INSTALL" && ok "一時ファイルを mktemp で作る" || ng "PID の一時ファイル名が残っている"
 
+echo "4k3. 退避したフックは実行権を保つ（元に戻しても動く）"
+rm -rf "$T/home11"; mkdir -p "$T/home11/.git-hooks"; printf '#!/bin/sh\necho mine\n' > "$T/home11/.git-hooks/pre-push"; chmod 755 "$T/home11/.git-hooks/pre-push"
+HOME="$T/home11" GIT_CONFIG_GLOBAL="$T/home11/.gitconfig" bash "$INSTALL" --force >/dev/null 2>&1
+bk="$(ls "$T/home11/.git-hooks"/pre-push.bak.* 2>/dev/null | head -1)"
+[ -n "$bk" ] && [ -x "$bk" ] && ok "退避先も実行可能" || ng "退避先の実行権: $(ls -l "$T/home11/.git-hooks" | tail -2)"
+
+echo "4k4. git の環境変数があっても、グローバルの値をリポジトリの外で読む"
+( cd "$T/repo9" && GIT_DIR="$T/repo9/.git" HOME="$T/home9" GIT_CONFIG_GLOBAL="$T/home9/.gitconfig" bash "$INSTALL" >"$T/out13" 2>&1 ); rc=$?
+[ $rc -eq 0 ] && [ ! -e "$T/home9/only-here/pre-push" ] && ok "GIT_DIR があっても includeIf の値を取り違えない" || ng "GIT_DIR: rc=$rc $(ls "$T/home9/only-here" 2>&1)"
+
 echo "4k2. 退避先の名前も予測できない"
 ! grep -q 'pre-push.bak.\$ts"' "$INSTALL" && ok "退避先を mktemp で作る" || ng "時刻だけの退避先の名前が残っている"
 

@@ -100,8 +100,7 @@ guard_reports_dir() {
   # 検査の中身は reports-guard.sh（索引に加えて、コミットのツリーも見る）
   . "$script_dir/reports-guard.sh"
   if reports_untrusted "$top"; then
-    echo "リポジトリの .review-reports がシンボリックリンクか、git で追跡されています（サブディレクトリ・大文字小文字違いを含む）。レビューの出力を書けません。" >&2
-    echo "レビュー対象のコミットに .review-reports が含まれていないか確かめてください。" >&2
+    reports_untrusted_message
     exit 1
   fi
 }

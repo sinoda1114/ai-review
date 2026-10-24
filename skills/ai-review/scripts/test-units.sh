@@ -95,6 +95,12 @@ fi
 mkrepo "$T/r4"; obj="$(git -C "$T/r4" rev-parse HEAD^{tree})"
 rm -f "$T/r4/.git/objects/${obj:0:2}/${obj:2}"
 ( . "$here/reports-guard.sh"; reports_untrusted "$T/r4" ) && ok "コミットのツリーを読めなければ信用しない" || ng "読めないツリーを信用した"
+# 読めないときは、追跡されているとは言わずに、読めないと言う
+(cd "$T/r4" && bash "$here/resolve-item.sh" --list > "$T/r4-ri.out" 2>&1)
+grep -q '読めません' "$T/r4-ri.out" && ! grep -q '追跡されています' "$T/r4-ri.out" && ok "ツリーを読めないときは、読めないと知らせる" || ng "文言: $(head -1 "$T/r4-ri.out")"
+# HEAD はあるのにコミットを読めなければ、信用しない
+mkrepo "$T/r5"; cm="$(git -C "$T/r5" rev-parse HEAD)"; rm -f "$T/r5/.git/objects/${cm:0:2}/${cm:2}"
+( . "$here/reports-guard.sh"; reports_untrusted "$T/r5" ) && ok "HEAD のコミットを読めなければ信用しない" || ng "壊れた HEAD を信用した"
 # 一時ファイルの名前は予測できない
 ! grep -q '".tmp"' "$RR" && grep -q 'mkstemp' "$RR" && ok "run-reviews.sh の一時ファイルは mkstemp で作る" || ng "予測できる .tmp が残っている"
 

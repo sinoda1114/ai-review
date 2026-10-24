@@ -8,17 +8,31 @@
 #   grep -q は途中で読むのをやめ、pipefail の下で上流が SIGPIPE で失敗扱いになるので、-c で最後まで読む。
 # reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）
 reports_unreadable() {
-  git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1 || return 1   # コミットが無い（HEAD がまだ無い、など）
+  git -C "$1" rev-parse -q --verify "$2" >/dev/null 2>&1 || return 1   # コミットが無い（HEAD がまだ無い、など）
+  git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1 || return 0   # 指す先はあるのに、コミットを読めない
   ! git -C "$1" ls-tree -r --name-only "$2" >/dev/null 2>&1
+}
+# reports_untrusted が 0 を返したときの理由: link（シンボリックリンク）・tracked（追跡されている）・unreadable（読めない）
+REPORTS_WHY=""
+# reports_untrusted_message: 理由に合った文言を標準エラーに出す
+reports_untrusted_message() {
+  if [ "$REPORTS_WHY" = "unreadable" ]; then
+    echo "コミットのツリーを読めません。.review-reports が含まれていないかを確かめられないので、レビューの出力を書けません。" >&2
+    echo "リポジトリが壊れていないか（git fsck）、遅延取得のオブジェクトが取れるかを確かめてください。" >&2
+  else
+    echo "リポジトリの .review-reports がシンボリックリンクか、git で追跡されています（サブディレクトリ・大文字小文字違いを含む）。レビューの出力を書けません。" >&2
+    echo "レビュー対象のコミットに .review-reports が含まれていないか確かめてください。" >&2
+  fi
 }
 reports_untrusted() {
   local top="$1"; shift
   local pat='(^|/)\.review-reports(/|$)' c
-  [ -L "$top/.review-reports" ] && return 0
-  [ "$(git -C "$top" ls-files -z 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
+  REPORTS_WHY=link; [ -L "$top/.review-reports" ] && return 0
+  REPORTS_WHY=tracked; [ "$(git -C "$top" ls-files -z 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
   [ $# -gt 0 ] || set -- HEAD
   for c in "$@"; do
-    reports_unreadable "$top" "$c" && return 0
+    reports_unreadable "$top" "$c" && { REPORTS_WHY=unreadable; return 0; }
+    REPORTS_WHY=tracked
     [ "$(git -C "$top" ls-tree -r -z --name-only "$c" 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
   done
   return 1

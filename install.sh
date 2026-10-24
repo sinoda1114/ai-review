@@ -66,7 +66,7 @@ esac
 # フックの置き場所を決める（まだ書き換えない）。include で書いた設定もたどる。
 # リポジトリの外（/）で読む: リポジトリの中で読むと、includeIf "gitdir:…" をそのリポジトリで判定し、
 # その場所でだけ効く値をグローバルの値と取り違える（ほかのリポジトリではゲートが効かなくなる）
-hooks="$(cd / && GIT_CEILING_DIRECTORIES=/ git config --global --includes --get core.hooksPath || true)"
+hooks="$(cd / && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR GIT_CEILING_DIRECTORIES=/ git config --global --includes --get core.hooksPath || true)"
 hooks="${hooks/#\~/$HOME}"
 set_hooks_path=0
 if [ -z "$hooks" ]; then
@@ -126,7 +126,8 @@ else
 fi
 mkdir -p "$hooks"
 if [ $replace_hook -eq 1 ]; then
-  bak="$(mktemp "$hooks/pre-push.bak.$ts.XXXXXX")"; cp "$hooks/pre-push" "$bak"; echo "  既存の pre-push を ${bak} に退避しました"
+  bak="$(mktemp "$hooks/pre-push.bak.$ts.XXXXXX")"; cp -p "$hooks/pre-push" "$bak";   # -p: 実行権を保つ（元に戻しても動く）
+  echo "  既存の pre-push を ${bak} に退避しました"
 fi
 if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hooks/pre-push"; then
   chmod +x "$hooks/pre-push"

@@ -68,20 +68,26 @@ done <<< "$input"
 # 中身は scripts/reports-guard.sh の写し（このフックは ~/.git-hooks に単独で置かれ、スキルのファイルを読めないため。直すときは両方直す）。
 # 索引だけでなく、push するコミットのツリーも見る（git rm --cached で外しただけのコミット済みの .review-reports を見落とさない）
 reports_unreadable() {  # コミットのツリーを読めなければ信用しない（git の失敗を「追跡されていない」と読まない）
+  git rev-parse -q --verify "$1^{commit}" >/dev/null 2>&1 || return 0
   ! git ls-tree -r --name-only "$1" >/dev/null 2>&1
 }
+reports_why=""
 reports_untrusted() {
   local pat='(^|/)\.review-reports(/|$)' c
   [ -L .review-reports ] && return 0
   [ "$(git ls-files -z 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
   for c in $push_shas; do
-    reports_unreadable "$c" && return 0
+    reports_unreadable "$c" && { reports_why=unreadable; return 0; }
     [ "$(git ls-tree -r -z --name-only "$c" 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
   done
   return 1
 }
 if reports_untrusted; then
-  echo "[ai-review] 拒否: .review-reports がシンボリックリンクか、git で追跡されています。記録を信用できません" >&2
+  if [ "$reports_why" = "unreadable" ]; then
+    echo "[ai-review] 拒否: push するコミットのツリーを読めないので、.review-reports が含まれていないかを確かめられません（git fsck で確かめてください）" >&2
+  else
+    echo "[ai-review] 拒否: .review-reports がシンボリックリンクか、git で追跡されています。記録を信用できません" >&2
+  fi
   exit 1
 fi
 f=".review-reports/latest.json"
