@@ -215,7 +215,7 @@ HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/o
 [ $rc -eq 0 ] && ok "スティッキービット付きの親（/tmp と同じ形）は通す" || ng "スティッキーで止まった rc=$rc $(tail -2 "$T/out24")"
 chmod 755 "$T/home23/shared"
 personal=0   # install.sh と同じ条件で、利用者の専用グループかを決める
-if [ "$(id -gn)" = "$(id -un)" ] && command -v getent >/dev/null 2>&1; then
+if [ "$(id -gn)" = "$(id -un)" ] && [ "$(id -g)" = "$(id -u)" ] && command -v getent >/dev/null 2>&1; then
   if [ -z "$(getent group "$(id -gn)" | cut -d: -f4 | tr ',' '\n' | grep -vxF "$(id -un)")" ] \
     && [ "$(getent passwd | awk -F: -v g="$(id -g)" '$4 == g' | wc -l | tr -d ' ')" -le 1 ]; then personal=1; fi
 fi
@@ -388,6 +388,12 @@ rm -rf "$T/home19"; mkdir -p "$T/home19"
 HOME="$T/home19" GIT_CONFIG_GLOBAL="$T/home19/.gitconfig" git config --global core.hooksPath "$T/home19/a/b/hooks"
 ( umask 002; HOME="$T/home19" GIT_CONFIG_GLOBAL="$T/home19/.gitconfig" bash "$INSTALL" >"$T/out20" 2>&1 ); rc=$?
 [ $rc -eq 0 ] && [ -z "$(find "$T/home19/a" "$T/home19/a/b" "$T/home19/a/b/hooks" -perm -0020)" ] && ok "作った親もグループに書き込ませない" || ng "親の権限: rc=$rc $(ls -ld "$T/home19/a")"
+
+echo "4n2. 導入先の中の clone から --hook-only で入れても、その clone を消すよう勧めない"
+rm -rf "$T/home47"; inner2="$T/home47/.claude/skills/ai-review"; mkdir -p "$inner2"
+cp "$INSTALL" "$inner2/"; cp -R "$root/skills" "$inner2/"
+HOME="$T/home47" GIT_CONFIG_GLOBAL="$T/home47/.gitconfig" bash "$inner2/install.sh" --hook-only >"$T/out50" 2>&1; rc=$?
+[ $rc -eq 0 ] && ! grep -q '要らなければ消して' "$T/out50" && ok "フックが使う clone は消すよう勧めない" || ng "clone を消すよう勧めた rc=$rc"
 
 echo "4o. claude が無ければ何も書き換えずに止まる"
 mkdir -p "$T/bin-noclaude"; for c in git python3 dirname date sed mktemp; do p="$(command -v "$c")" && ln -sf "$p" "$T/bin-noclaude/$c"; done

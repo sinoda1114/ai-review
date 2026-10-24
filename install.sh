@@ -89,9 +89,9 @@ case "$hook_skill" in
 esac
 
 # 利用者ごとの専用グループ（Ubuntu などの既定）なら、グループで書き込めても本人だけ。
-# グループ名が利用者名と同じで、ほかのメンバーも、そのグループを主に使う利用者もいないこと（getent で確かめる。無ければ専用とみなさない）
+# グループ名が利用者名と同じ、gid が uid と同じで、ほかのメンバーも、そのグループを主に使う利用者もいないこと（getent で確かめる。無ければ専用とみなさない）
 personal_gid=""
-if [ "$(id -gn)" = "$(id -un)" ] && command -v getent >/dev/null 2>&1; then
+if [ "$(id -gn)" = "$(id -un)" ] && [ "$(id -g)" = "$(id -u)" ] && command -v getent >/dev/null 2>&1; then
   if [ -z "$(getent group "$(id -gn)" | cut -d: -f4 | tr ',' '\n' | grep -vxF "$(id -un)")" ] \
     && [ "$(getent passwd | awk -F: -v g="$(id -g)" '$4 == g' | wc -l | tr -d ' ')" -le 1 ]; then personal_gid="$(id -g)"
   fi
@@ -276,7 +276,11 @@ fi
 echo "== スキルの導入"
 if [ $hook_only -eq 1 ]; then
   echo "  入れません（--hook-only）。フックの案内文には ${src} の場所を書きます"
-  if [ -e "$dst" ] || [ -L "$dst" ]; then
+  case "$src/" in
+    "$(cd "$dst" 2>/dev/null && pwd -P)"/*) inside_dst=1 ;;
+    *) inside_dst=0 ;;
+  esac
+  if { [ -e "$dst" ] || [ -L "$dst" ]; } && [ $inside_dst -eq 0 ]; then
     echo "  注意: ${dst} も残っています。プラグインと両方あるとスキルが 2 つ読み込まれるので、要らなければ消してください" >&2
   fi
 else
@@ -306,9 +310,8 @@ if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hoo
 else
   # 同じディレクトリに書いてから mv で置き換える（既存のフックがリンクでも、リンク先を書き換えない）
   tmp_hook="$(mktemp "$hooks/.pre-push.new.XXXXXX")"; cp "$new" "$tmp_hook"; chmod +x "$tmp_hook"
-  # リンクは退避済み。ディレクトリへのリンクだと mv がその中へ移すので、先に消す
-  if [ -L "$hooks/pre-push" ]; then rm -f "$hooks/pre-push"; fi
-  mv -f "$tmp_hook" "$hooks/pre-push"; tmp_hook=""
+  # rename(2) で 1 回で置き換える。リンクは退避済みで、リンク自身を置き換える（mv はディレクトリへのリンクだとその中へ移す）
+  python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$tmp_hook" "$hooks/pre-push"; tmp_hook=""
   echo "  入れました: ${hooks}/pre-push"
 fi
 # core.hooksPath はフックを置いた後に書く（途中で止まっても、ゲートの無い置き場所を指したままにしない）
