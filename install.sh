@@ -69,8 +69,15 @@ case "$hook_skill" in
     exit 1 ;;
 esac
 
-# 利用者ごとの専用グループ（Ubuntu などの既定。グループ名が利用者名と同じ）なら、グループで書き込めても本人だけ
-personal_gid=""; if [ "$(id -gn)" = "$(id -un)" ]; then personal_gid="$(id -g)"; fi
+# 利用者ごとの専用グループ（Ubuntu などの既定）なら、グループで書き込めても本人だけ。
+# グループ名が利用者名と同じで、getent が使えるなら、ほかのメンバーも、そのグループを主に使う利用者もいないこと
+personal_gid=""
+if [ "$(id -gn)" = "$(id -un)" ]; then
+  if ! command -v getent >/dev/null 2>&1; then personal_gid="$(id -g)"
+  elif [ -z "$(getent group "$(id -gn)" | cut -d: -f4 | tr ',' '\n' | grep -vxF "$(id -un)")" ] \
+    && [ "$(getent passwd | awk -F: -v g="$(id -g)" '$4 == g' | wc -l | tr -d ' ')" -le 1 ]; then personal_gid="$(id -g)"
+  fi
+fi
 writable_by_others() {  # $1 を他人か、専用でないグループが書き込めるなら真（-H・-L でリンク先を見る）
   [ -n "$(find -H "$1" -maxdepth 0 -perm -0002 2>/dev/null)" ] && return 0
   [ -n "$(find -H "$1" -maxdepth 0 -perm -0020 2>/dev/null)" ] && [ "$(ls -ldnL "$1" | awk '{print $4}')" != "$personal_gid" ] && return 0
@@ -79,21 +86,37 @@ writable_by_others() {  # $1 を他人か、専用でないグループが書き
 unsafe_path() {  # 自分の持ち物でないか、他人が書き込めるなら真
   [ ! -O "$1" ] || writable_by_others "$1"
 }
-unsafe_parents() {  # 置き場所の親を / までたどり、他人が中身を入れ替えられる親があれば真
-  local d="$1" uid
-  if [ -e "$d" ]; then d="$(cd "$d" 2>/dev/null && pwd -P)" || return 0; d="$(dirname "$d")"
-  else
-    while [ ! -e "$d" ]; do d="$(dirname "$d")"; done   # まだ無いなら、作る場所になる一番近い親から
-    d="$(cd "$d" 2>/dev/null && pwd -P)" || return 0
-  fi
-  while :; do
-    # 本人か root の持ち物で、他人が書き込めない（またはスティッキービット付きの /tmp の形）なら安全
-    uid="$(ls -ldn "$d" | awk '{print $3}')"
-    [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || return 0
-    if [ -z "$(find -H "$d" -maxdepth 0 -perm -1000 2>/dev/null)" ] && writable_by_others "$d"; then return 0; fi
-    [ "$d" = / ] && return 1
+unsafe_dir() {  # 親として危ないなら真。本人か root の持ち物で、他人が書き込めない（またはスティッキービット付きの /tmp の形）なら安全
+  local uid; uid="$(ls -ldnL "$1" | awk '{print $3}')"
+  [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || return 0
+  [ -z "$(find -H "$1" -maxdepth 0 -perm -1000 2>/dev/null)" ] && writable_by_others "$1" && return 0
+  return 1
+}
+unsafe_chain() {  # $1 の親を / まで 1 段ずつ確かめる（$1 自身は含めない）。リンクはそれ自身の mode に意味が無いので、置いた場所（その親）で見る
+  local d="$1"
+  while [ "$d" != / ]; do
+    d="$(dirname "$d")"
+    [ -L "$d" ] && continue
+    [ -e "$d" ] || continue
+    unsafe_dir "$d" && return 0
+  done
+  return 1
+}
+unsafe_parents() {  # 置き場所の親に、他人が中身やリンクを入れ替えられるものがあれば真
+  local d="$1"
+  unsafe_chain "$d" && return 0   # 書かれたままの形（途中のリンクを置いた場所も見る）
+  while [ ! -e "$d" ]; do d="$(dirname "$d")"; done   # まだ無いなら、作る場所になる一番近い親
+  d="$(cd "$d" 2>/dev/null && pwd -P)" || return 0
+  [ "$d" != "$(cd "$1" 2>/dev/null && pwd -P)" ] && unsafe_dir "$d" && return 0
+  unsafe_chain "$d"                # リンクをたどった先の実体の形
+}
+broken_link_in() {  # $1 かその途中に、リンク先の無いシンボリックリンクがあれば、それを出して真
+  local d="$1"
+  while [ "$d" != / ]; do
+    if [ -L "$d" ] && [ ! -e "$d" ]; then printf '%s' "$d"; return 0; fi
     d="$(dirname "$d")"
   done
+  return 1
 }
 norm_path() {  # git と同じく先頭の ~ を展開し、末尾の / を落とす
   local v="${1/#\~/$HOME}"
@@ -118,8 +141,8 @@ else
   esac
 fi
 # 置き場所をグループや他人が書き換えられると、フックを差し替えられる
-if [ -L "$hooks" ] && [ ! -e "$hooks" ]; then
-  echo "フックの置き場所（${hooks}）が、リンク先の無いシンボリックリンクです。リンク先を作るか、core.hooksPath を直してから実行してください。" >&2
+if broken="$(broken_link_in "$hooks")"; then
+  echo "フックの置き場所（${hooks}）の途中の ${broken} が、リンク先の無いシンボリックリンクです。リンク先を作るか、core.hooksPath を直してから実行してください。" >&2
   exit 1
 fi
 if [ -e "$hooks" ] && [ ! -d "$hooks" ]; then
@@ -191,6 +214,11 @@ else
 fi
 if [ ! -e "$hooks" ]; then
   ( umask 022; mkdir -p "$hooks" )   # umask 002 でも、途中の親を含めてグループが書き込める置き場所を作らない
+  # 確かめてから作るまでの間に、他人が途中を先に作っていないか
+  if unsafe_parents "$hooks" || unsafe_path "$hooks"; then
+    echo "== 失敗: 作ったフックの置き場所（${hooks}）か、その親の持ち主・権限が想定と違います。フックは入れていません" >&2
+    exit 1
+  fi
 fi
 if [ $replace_hook -eq 1 ]; then
   cp "$hooks/pre-push" "$hooks/pre-push.bak.$ts"; echo "  既存の pre-push を ${hooks}/pre-push.bak.${ts} に退避しました"
@@ -217,12 +245,13 @@ fi
 # includeIf の中で core.hooksPath を設定していると、その条件に当たるリポジトリでは別の置き場所が使われる
 # includeIf の先のファイルを読み、core.hooksPath を設定しているものがあるときだけ知らせる
 cond_hp=0
-while IFS=$'\t' read -r origin kv; do
-  [ -n "$kv" ] || continue
-  f="$(norm_path "${kv#* }")"
+# -z で読むと、元のファイル名は引用符なしで NUL まで、キーと値は改行で分かれる（条件の中の空白・日本語に左右されない）。
+# 条件に当たらない includeIf の先にある、さらに入れ子の includeIf は見ない
+while IFS= read -r -d '' origin && IFS= read -r -d '' kv; do
+  f="$(norm_path "${kv#*$'\n'}")"
   case "$f" in /*) ;; *) f="$(dirname "${origin#file:}")/$f" ;; esac   # 相対パスは、書いてある設定ファイルからの位置
-  if [ -n "$(git config --file "$f" --includes --get core.hooksPath 2>/dev/null)" ]; then cond_hp=1; fi
-done < <(cd / && git config --global --includes --show-origin --get-regexp '^includeif\..*\.path$' 2>/dev/null || true)
+  if [ -n "$(cd / && git config --file "$f" --includes --get core.hooksPath 2>/dev/null)" ]; then cond_hp=1; fi
+done < <(cd / && git config --global --includes --show-origin -z --get-regexp '^includeif\..*\.path$' 2>/dev/null || true)
 if [ $cond_hp -eq 1 ]; then
   echo "== 注意: グローバルの設定の includeIf の先で core.hooksPath を設定しています。条件に当たるリポジトリでは、そちらの置き場所が使われてゲートが動きません" >&2
 fi

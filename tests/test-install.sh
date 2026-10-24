@@ -107,7 +107,7 @@ HOME="$T/home7" GIT_CONFIG_GLOBAL="$T/home7/.gitconfig" bash "$INSTALL" >"$T/out
 [ $rc -eq 0 ] && [ -x "$T/home7/inc-hooks/pre-push" ] && [ -z "$(git config --file "$T/home7/.gitconfig" --get core.hooksPath)" ] \
   && ok "include 先の core.hooksPath に置き、~/.gitconfig に別の値を書き足さない" || ng "include: rc=$rc $(tail -2 "$T/out8")"
 
-echo "4k. 導入の後、実際に効く core.hooksPath が違えば知らせて失敗する"
+echo "4k. 環境変数などで core.hooksPath が上書きされていれば、書き換える前に止まる"
 rm -rf "$T/home8"; mkdir -p "$T/home8"
 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$T/elsewhere" \
   HOME="$T/home8" GIT_CONFIG_GLOBAL="$T/home8/.gitconfig" bash "$INSTALL" >"$T/out9" 2>&1; rc=$?
@@ -223,6 +223,28 @@ else
   [ $rc -ne 0 ] && ok "共有のグループ（$(id -gn)）で書き込める親は止める" || ng "共有のグループで通った"
   chmod 755 "$T/home23/shared"
 fi
+
+echo "4y2. パスの途中のリンクを置いた場所も確かめる"
+rm -rf "$T/home24"; mkdir -p "$T/home24/shared" "$T/home24/real-hooks"; chmod 755 "$T/home24/real-hooks"; chmod 777 "$T/home24/shared"
+ln -s "$T/home24/real-hooks" "$T/home24/shared/hooks"
+HOME="$T/home24" GIT_CONFIG_GLOBAL="$T/home24/.gitconfig" git config --global core.hooksPath "$T/home24/shared/hooks"
+HOME="$T/home24" GIT_CONFIG_GLOBAL="$T/home24/.gitconfig" bash "$INSTALL" >"$T/out25" 2>&1; rc=$?
+chmod 755 "$T/home24/shared"
+[ $rc -ne 0 ] && [ ! -e "$T/home24/real-hooks/pre-push" ] && ok "他人が書き込める場所に置いたリンクの先には入れない" || ng "リンクを置いた場所の確認なし rc=$rc"
+
+echo "4v3. パスの途中にリンク先の無いリンクがあれば、何も書き換えずに止まる"
+rm -rf "$T/home25"; mkdir -p "$T/home25"; ln -s "$T/home25/missing" "$T/home25/x"
+HOME="$T/home25" GIT_CONFIG_GLOBAL="$T/home25/.gitconfig" git config --global core.hooksPath "$T/home25/x/hooks"
+HOME="$T/home25" GIT_CONFIG_GLOBAL="$T/home25/.gitconfig" bash "$INSTALL" >"$T/out26" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/home25/.claude" ] && grep -q 'リンク' "$T/out26" && ok "途中の壊れたリンクでは止まる" || ng "途中の壊れたリンク: rc=$rc $(ls -a "$T/home25") $(tail -2 "$T/out26")"
+
+echo "4u3. includeIf の条件や設定ファイルの場所に空白・日本語があっても見つける"
+rm -rf "$T/home26"; mkdir -p "$T/home26/設定 dir"
+printf '[core]\n\thooksPath = /nowhere/hooks\n' > "$T/home26/設定 dir/cond.gitconfig"
+printf '[includeIf "gitdir:/my projects/"]\n\tpath = cond.gitconfig\n' > "$T/home26/設定 dir/main.gitconfig"
+printf '[include]\n\tpath = %s\n' "$T/home26/設定 dir/main.gitconfig" > "$T/home26/.gitconfig"
+HOME="$T/home26" GIT_CONFIG_GLOBAL="$T/home26/.gitconfig" bash "$INSTALL" >"$T/out27" 2>&1; rc=$?
+[ $rc -eq 0 ] && grep -q 'includeIf' "$T/out27" && ok "空白・日本語を含む includeIf も見つける" || ng "空白入りの includeIf: rc=$rc"
 
 echo "4x. 置き場所の途中の親も、umask 002 でグループに書き込ませない"
 rm -rf "$T/home19"; mkdir -p "$T/home19"
