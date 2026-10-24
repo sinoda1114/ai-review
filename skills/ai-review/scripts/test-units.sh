@@ -101,6 +101,22 @@ grep -q '読めません' "$T/r4-ri.out" && ! grep -q '追跡されています'
 # HEAD はあるのにコミットを読めなければ、信用しない
 mkrepo "$T/r5"; cm="$(git -C "$T/r5" rev-parse HEAD)"; rm -f "$T/r5/.git/objects/${cm:0:2}/${cm:2}"
 ( . "$here/reports-guard.sh"; reports_untrusted "$T/r5" ) && ok "HEAD のコミットを読めなければ信用しない" || ng "壊れた HEAD を信用した"
+# ファイルシステムの上で同じディレクトリになる別名（大文字小文字だけ違うなど）も見落とさない
+mkrepo "$T/r6"; mkdir "$T/r6/.Review-Reportx" 2>/dev/null
+if [ -d "$T/r6/.REVIEW-REPORTS-CHECK" ] || { mkdir "$T/r6/.Case-Test" && [ -d "$T/r6/.case-test" ]; }; then
+  # 大文字小文字を区別しないファイルシステム: 綴りの違う名前で追跡させ、検査の正規表現を通らない形にする
+  (cd "$T/r6" && mkdir -p ".review-reportſ" 2>/dev/null; true)
+  alias=""; for n in ".review-reportſ" ".REVIEW-REPORTS"; do [ -d "$T/r6/$n" ] || mkdir "$T/r6/$n" 2>/dev/null; [ "$T/r6/$n" -ef "$T/r6/.review-reports" ] && { alias="$n"; break; }; done
+  if [ -n "$alias" ]; then
+    echo '{}' > "$T/r6/$alias/latest.json"; (cd "$T/r6" && G add -- "$alias" && G commit -qm alias)
+    ( . "$here/reports-guard.sh"; reports_untrusted "$T/r6" ) && ok "同じディレクトリになる別名（${alias}）で追跡されたものも信用しない" || ng "別名（${alias}）の追跡を信用した"
+    (cd "$T/r6" && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" $zero | bash "$HOOK" origin x > "$T/r6.out" 2>&1); rc=$?
+    [ $rc -ne 0 ] && grep -q '追跡されています' "$T/r6.out" && ok "pre-push も別名（${alias}）の追跡を拒む" || ng "pre-push: rc=$rc $(head -1 "$T/r6.out")"
+  else ok "（このファイルシステムでは別名が作れないので省く）"; fi
+else ok "（大文字小文字を区別するファイルシステムなので省く）"; fi
+# HEAD の ref の中身が壊れていたら、「HEAD がまだ無い」と取り違えない
+mkrepo "$T/r7"; echo "garbage" > "$T/r7/.git/refs/heads/main"
+( . "$here/reports-guard.sh"; reports_untrusted "$T/r7" ) && ok "壊れた ref の HEAD は信用しない" || ng "壊れた ref を「まだ無い」と取り違えた"
 # 一時ファイルの名前は予測できない
 ! grep -q '".tmp"' "$RR" && grep -q 'mkstemp' "$RR" && ok "run-reviews.sh の一時ファイルは mkstemp で作る" || ng "予測できる .tmp が残っている"
 

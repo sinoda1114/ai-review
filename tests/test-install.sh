@@ -149,6 +149,14 @@ git -C "$T/repo6" config --worktree core.hooksPath .husky
 ( cd "$T/repo6" && HOME="$T/home" GIT_CONFIG_GLOBAL="$T/home/.gitconfig" bash "$INSTALL" >"$T/out10" 2>&1 )
 grep -q 'ゲートが動きません' "$T/out10" && ok "worktree の設定でゲートが動かないときも警告する" || ng "警告なし: $(tail -3 "$T/out10")"
 
+echo "4i2. 導入先の中で止まるときは、--hook-only を勧めない（その配置ではスキルとして読み込まれない）"
+grep -q '導入先の中にあります' "$T/out7" && ! grep -q 'hook-only' "$T/out7" && ok "導入先の外に clone し直すよう案内する" || ng "案内: $(tail -2 "$T/out7")"
+
+echo "4m2. 同じ場所を別の書き方で設定していても、誤って警告しない"
+rm -rf "$T/repo7"; git init -q "$T/repo7"; git -C "$T/repo7" config core.hooksPath "$T/home/.git-hooks/"
+( cd "$T/repo7" && HOME="$T/home" GIT_CONFIG_GLOBAL="$T/home/.gitconfig" bash "$INSTALL" >"$T/out14" 2>&1 )
+! grep -q 'ゲートが動きません' "$T/out14" && ok "末尾の / だけ違う同じ場所では警告しない" || ng "誤って警告した"
+
 echo "5. 前提の確認"
 grep -q "python3" "$T/out" && grep -qi "codex" "$T/out" && ok "python3 と Codex CLI の有無を表示する" || ng "前提の表示: $(head -5 "$T/out")"
 

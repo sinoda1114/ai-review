@@ -52,7 +52,7 @@ if [ $hook_only -eq 0 ] && [ -d "$dst" ] && [ ! -L "$dst" ]; then
   case "$repo/" in
     "$dst_real"/*)
       echo "このリポジトリが導入先の中にあります: ${repo}" >&2
-      echo "導入先（${dst}）の外に clone し直して実行するか、スキルは今のまま使い、--hook-only でフックだけを入れてください。" >&2
+      echo "導入先（${dst}）の外に clone し直してから実行してください（この配置では、スキルとして読み込まれません）。" >&2
       exit 1 ;;
   esac
 fi
@@ -142,7 +142,7 @@ fi
 # （--local だけでなく、worktree の設定・includeIf などによる上書きも、実効値で確かめる）
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   eff_hp="$(git config --includes --get core.hooksPath 2>/dev/null || true)"; eff_hp="${eff_hp/#\~/$HOME}"
-  if [ -n "$eff_hp" ] && [ "$eff_hp" != "$hooks" ]; then
+  if [ -n "$eff_hp" ] && [ "${eff_hp%/}" != "${hooks%/}" ] && ! [ "$eff_hp" -ef "$hooks" ]; then   # 書き方が違うだけの同じ場所は除く
     echo "== 注意: このリポジトリ（$(git rev-parse --show-toplevel)）では core.hooksPath=${eff_hp} が効いていて、ゲートが動きません" >&2
     echo "   リポジトリ単位の設定（--local・--worktree・includeIf）を消すか、そこにも pre-push を置いてください" >&2
   fi

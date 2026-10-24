@@ -76,6 +76,11 @@ reports_untrusted() {
   local pat='(^|/)\.review-reports(/|$)' c
   [ -L .review-reports ] && return 0
   [ "$(git ls-files -z 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
+  # ファイルシステムの上で .review-reports と同じ実体になる別名で追跡されているもの（大文字小文字・Unicode の同一視）
+  local first
+  while IFS= read -r first; do
+    [ -n "$first" ] && [ "$first" != ".review-reports" ] && [ "./$first" -ef "./.review-reports" ] && return 0
+  done < <(git ls-files -z 2>/dev/null | tr '\0' '\n' | cut -d/ -f1 | sort -u)
   for c in $push_shas; do
     reports_unreadable "$c" && { reports_why=unreadable; return 0; }
     [ "$(git ls-tree -r -z --name-only "$c" 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
