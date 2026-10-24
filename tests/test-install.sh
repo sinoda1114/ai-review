@@ -213,9 +213,8 @@ HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/o
 [ $rc -eq 0 ] && ok "スティッキービット付きの親（/tmp と同じ形）は通す" || ng "スティッキーで止まった rc=$rc $(tail -2 "$T/out24")"
 chmod 755 "$T/home23/shared"
 personal=0   # install.sh と同じ条件で、利用者の専用グループかを決める
-if [ "$(id -gn)" = "$(id -un)" ]; then
-  if ! command -v getent >/dev/null 2>&1; then personal=1
-  elif [ -z "$(getent group "$(id -gn)" | cut -d: -f4 | tr ',' '\n' | grep -vxF "$(id -un)")" ] \
+if [ "$(id -gn)" = "$(id -un)" ] && command -v getent >/dev/null 2>&1; then
+  if [ -z "$(getent group "$(id -gn)" | cut -d: -f4 | tr ',' '\n' | grep -vxF "$(id -un)")" ] \
     && [ "$(getent passwd | awk -F: -v g="$(id -g)" '$4 == g' | wc -l | tr -d ' ')" -le 1 ]; then personal=1; fi
 fi
 if [ $personal -eq 1 ]; then
@@ -260,6 +259,20 @@ HOME="$T/home29" GIT_CONFIG_GLOBAL="$T/home29/.gitconfig" bash "$INSTALL" >"$T/o
 chmod 755 "$T/home29/ro"
 [ $rc -ne 0 ] && [ ! -e "$T/home29/.claude" ] && ok "置き場所を作れないときはスキルを入れない" || ng "作れない置き場所: rc=$rc $(ls -a "$T/home29" | tr '\n' ' ')"
 fi
+
+echo "4u4. includeIf の先の core.hooksPath が置き場所と同じなら知らせない"
+rm -rf "$T/home30"; mkdir -p "$T/home30"
+printf '[core]\n\thooksPath = %s\n' "$T/home30/.git-hooks" > "$T/home30/cond.gitconfig"
+printf '[includeIf "gitdir:/nowhere/"]\n\tpath = %s\n' "$T/home30/cond.gitconfig" > "$T/home30/.gitconfig"
+HOME="$T/home30" GIT_CONFIG_GLOBAL="$T/home30/.gitconfig" bash "$INSTALL" >"$T/out31" 2>&1; rc=$?
+[ $rc -eq 0 ] && ! grep -q 'includeIf' "$T/out31" && ok "同じ置き場所を指す includeIf では注意を出さない" || ng "同じ置き場所で注意: rc=$rc"
+
+echo "4z. HOME が相対パスなら、止まらなくなる前に止める"
+rm -rf "$T/rel"; mkdir -p "$T/rel/h"
+( cd "$T/rel" && HOME=h GIT_CONFIG_GLOBAL="$T/rel/h/.gitconfig" bash "$INSTALL" >"$T/out32" 2>&1 ) & pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 $pid 2>/dev/null || break; sleep 1; done
+if kill -0 $pid 2>/dev/null; then kill $pid; ng "HOME が相対のとき 10 秒で終わらない"
+else wait $pid; rc=$?; [ $rc -ne 0 ] && [ ! -e "$T/rel/h/.claude" ] && ok "相対の HOME では何も書き換えずに止まる" || ng "相対の HOME: rc=$rc"; fi
 
 echo "4v3. パスの途中にリンク先の無いリンクがあれば、何も書き換えずに止まる"
 rm -rf "$T/home25"; mkdir -p "$T/home25"; ln -s "$T/home25/missing" "$T/home25/x"

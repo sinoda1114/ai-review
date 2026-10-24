@@ -46,6 +46,10 @@ check claude 必須 "Claude Code CLI。自前観点のレビュアーを動か�
 check codex 任意 "Codex CLI。無いと Claude 側だけになり、毎回「未取得」の項目が付く"
 [ $missing -eq 0 ] || { echo "必須のコマンドが足りないため中断します" >&2; exit 1; }
 
+case "$HOME" in
+  /*) ;;
+  *) echo "HOME が絶対パスではありません（${HOME}）。絶対パスにしてから実行してください。" >&2; exit 1 ;;
+esac
 skills="$HOME/.claude/skills"; dst="$skills/ai-review"
 backup_root="$HOME/.claude/ai-review-backup"   # skills の外に退避する（skills の中だと二重に読み込まれる）
 
@@ -71,11 +75,10 @@ case "$hook_skill" in
 esac
 
 # 利用者ごとの専用グループ（Ubuntu などの既定）なら、グループで書き込めても本人だけ。
-# グループ名が利用者名と同じで、getent が使えるなら、ほかのメンバーも、そのグループを主に使う利用者もいないこと
+# グループ名が利用者名と同じで、ほかのメンバーも、そのグループを主に使う利用者もいないこと（getent で確かめる。無ければ専用とみなさない）
 personal_gid=""
-if [ "$(id -gn)" = "$(id -un)" ]; then
-  if ! command -v getent >/dev/null 2>&1; then personal_gid="$(id -g)"
-  elif [ -z "$(getent group "$(id -gn)" | cut -d: -f4 | tr ',' '\n' | grep -vxF "$(id -un)")" ] \
+if [ "$(id -gn)" = "$(id -un)" ] && command -v getent >/dev/null 2>&1; then
+  if [ -z "$(getent group "$(id -gn)" | cut -d: -f4 | tr ',' '\n' | grep -vxF "$(id -un)")" ] \
     && [ "$(getent passwd | awk -F: -v g="$(id -g)" '$4 == g' | wc -l | tr -d ' ')" -le 1 ]; then personal_gid="$(id -g)"
   fi
 fi
@@ -121,7 +124,7 @@ unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リ
 }
 broken_link_in() {  # $1 かその途中に、リンク先の無いシンボリックリンクがあれば、それを出して真
   local d="$1"
-  while [ "$d" != / ]; do
+  while [ "$d" != / ] && [ "$d" != . ]; do
     if [ -L "$d" ] && [ ! -e "$d" ]; then printf '%s' "$d"; return 0; fi
     d="$(dirname "$d")"
   done
@@ -168,8 +171,12 @@ if problem="$(unsafe_route "$hooks")"; then
   echo "自分か root の持ち物でないか、他人（専用でないグループを含む）が書き込める場所があると、置き場所ごと差し替えられます。直すか別の場所にしてください。" >&2
   exit 1
 fi
+if [ -e "$hooks" ] && [ ! -O "$hooks" ]; then
+  echo "フックの置き場所（${hooks}）が自分の持ち物ではありません。自分の持ち物の場所に core.hooksPath を設定し直してから実行してください。" >&2
+  exit 1
+fi
 if [ -e "$hooks" ] && unsafe_path "$hooks"; then
-  echo "フックの置き場所（${hooks}）が自分の持ち物でないか、他人（専用でないグループを含む）が書き込めます。権限を直してから実行してください（例: chmod go-w ${hooks}）。" >&2
+  echo "フックの置き場所（${hooks}）を、他人（専用でないグループを含む）が書き込めます。権限を直してから実行してください（例: chmod go-w ${hooks}）。" >&2
   exit 1
 fi
 # global より強い指定（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS・git -c）があると、ここに入れてもゲートが動かない
@@ -269,10 +276,11 @@ cond_hp=0
 while IFS= read -r -d '' origin && IFS= read -r -d '' kv; do
   f="$(norm_path "${kv#*$'\n'}")"
   case "$f" in /*) ;; *) f="$(dirname "${origin#file:}")/$f" ;; esac   # 相対パスは、書いてある設定ファイルからの位置
-  if [ -n "$(cd / && git config --file "$f" --includes --get core.hooksPath 2>/dev/null)" ]; then cond_hp=1; fi
+  v="$(cd / && git config --file "$f" --includes --get core.hooksPath 2>/dev/null || true)"
+  if [ -n "$v" ] && ! same_place "$v" "$hooks"; then cond_hp=1; fi
 done < <(cd / && git config --global --includes --show-origin -z --get-regexp '^includeif\..*\.path$' 2>/dev/null || true)
 if [ $cond_hp -eq 1 ]; then
-  echo "== 注意: グローバルの設定の includeIf の先で core.hooksPath を設定しています。条件に当たるリポジトリでは、そちらの置き場所が使われてゲートが動きません" >&2
+  echo "== 注意: グローバルの設定の includeIf の先で、別の core.hooksPath を設定しています。条件に当たるリポジトリでは、そちらの置き場所が使われてゲートが動かないことがあります" >&2
 fi
 
 # 実行した場所がリポジトリで、リポジトリ単位の core.hooksPath があれば、そこではゲートが動かない
