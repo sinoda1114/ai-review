@@ -120,20 +120,34 @@ def _repo_path(f):
     return _strip_root(_clean_cell(f or ""))
 
 
-def _in_diff(f, changed, head):
+def _in_tree(rev, path):
+    """path が rev の木にあるか。git が失敗したら None（呼び出し側は「分からない」を安全な側に倒す）"""
+    if "\0" in path:
+        return False  # NUL を含む名前のファイルは作れない
+    import subprocess
+    try:
+        r = subprocess.run(["git", "--literal-pathspecs", "ls-tree", "-z", "--full-tree", "--name-only", rev, "--", path],
+                           capture_output=True)
+    except (OSError, ValueError):
+        return None
+    if r.returncode != 0:
+        return None
+    return path.encode("utf-8", "surrogateescape") in r.stdout.split(b"\0")
+
+
+def _in_diff(f, changed, prev_head):
     """項目の file が、差分の一覧（git が出した生のパスの集合）にあるか。
-    まず整形しない形（絶対パスと ./ だけ外す）で比べる。整形（空白・:行番号・装飾を外す）で初めて一致したときは、
-    整形前の名前が HEAD に実在しないとき（レビュアーの書き方の揺れ）だけ一致にする。実在すれば項目はそのファイルを
-    指しているので、`n8.js:12` の fixed を `n8.js` の変更で再レビュー済みにしない（ai-review#5 の 8）"""
+    項目が指すファイルを、項目を記録した前回の記録の木（prev_head）で 1 つに決めてから比べる。整形しない形
+    （絶対パスと ./ だけ外す）がその木にあればそれ、無ければ整形（空白・:行番号・装飾を外す）した形。
+    整形した形と整形しない形の両方で比べると、変わった名前のファイル（`n8.js:12`）を足したり、それに付いた
+    fixed を `n8.js` の変更で片づけたりして、確かめていない fixed を再レビュー済みにできる（ai-review#5 の 8）。
+    git で決められなければ一致にしない（fixed は open に戻る）"""
     f = f or ""
     raw = re.sub(r"^\./", "", _strip_root(f))
-    if raw in changed:
-        return True
-    clean = _repo_path(f)
-    if clean == raw or clean not in changed:
+    exists = _in_tree(prev_head, raw)
+    if exists is None:
         return False
-    import subprocess
-    return subprocess.run(["git", "cat-file", "-e", "%s:%s" % (head, raw)], capture_output=True).returncode != 0
+    return (raw if exists else _repo_path(f)) in changed
 
 
 def _table_lines(text):
@@ -776,13 +790,16 @@ def cmd_record(a):
                       newline="") as f:
                 changed = {p for p in f.read().split("\0") if p}
         except OSError:
-            pass  # 一覧が無ければ、差分にあると確かめられないので fixed は open に戻る
+            # 一覧が無ければ、差分にあると確かめられないので fixed は open に戻る
+            if os.path.exists(os.path.join(a.run, "changed-files-all.txt")):
+                print("[ai-review] 注意: run ディレクトリの変更ファイルの一覧が古い形式（changed-files-all.txt）です。"
+                      "fixed はすべて open に戻ります。run-reviews.sh を回し直してください", file=sys.stderr)
     if prev.get("branch") == a.branch and prev.get("head_sha") and prev.get("head_sha") != a.head:
         for it in prev.get("must_address") or []:
             if not isinstance(it, dict):
                 continue
             if (it.get("status") == "fixed" and not it.get("re_reviewed_sha") and incremental
-                    and not _in_diff(it.get("file"), changed, a.head)):
+                    and not _in_diff(it.get("file"), changed, prev["head_sha"])):
                 # 差分レビューは差分の中しか見ないので、差分にそのファイルが無い fixed は確かめられていない。
                 # 再レビュー済みにせず、open に戻して引き継ぐ（偽の fixed で BLOCK・高リスクを抜けさせない）
                 c = dict(it, status="open")
