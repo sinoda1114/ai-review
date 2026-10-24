@@ -67,11 +67,15 @@ done <<< "$input"
 # レビュー対象のコミットに .review-reports が入っていれば、その記録は信用しない。
 # 中身は scripts/reports-guard.sh の写し（このフックは ~/.git-hooks に単独で置かれ、スキルのファイルを読めないため。直すときは両方直す）。
 # 索引だけでなく、push するコミットのツリーも見る（git rm --cached で外しただけのコミット済みの .review-reports を見落とさない）
+reports_unreadable() {  # コミットのツリーを読めなければ信用しない（git の失敗を「追跡されていない」と読まない）
+  ! git ls-tree -r --name-only "$1" >/dev/null 2>&1
+}
 reports_untrusted() {
   local pat='(^|/)\.review-reports(/|$)' c
   [ -L .review-reports ] && return 0
   [ "$(git ls-files -z 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
   for c in $push_shas; do
+    reports_unreadable "$c" && return 0
     [ "$(git ls-tree -r -z --name-only "$c" 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
   done
   return 1

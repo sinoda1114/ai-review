@@ -82,5 +82,21 @@ mkrepo "$T/r3"
 (cd "$T/r3" && bash "$here/resolve-item.sh" --list > "$T/r3-ri.out" 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q '追跡されています' "$T/r3-ri.out" && ok "resolve-item.sh も、コミットのツリーの .review-reports を拒む" || ng "resolve-item.sh: rc=$rc $(head -2 "$T/r3-ri.out")"
 
+echo "4. 強化（own-security の提案）"
+# pre-push の写しと reports-guard.sh が食い違っていない（同じパターン・同じ手順）
+gp="$(grep -o "pat='[^']*'" "$here/reports-guard.sh" | head -1)"; hp="$(grep -o "pat='[^']*'" "$HOOK" | head -1)"
+if [ -n "$gp" ] && [ "$gp" = "$hp" ] && grep -q 'ls-tree -r -z --name-only' "$HOOK" && grep -q 'ls-tree -r -z --name-only' "$here/reports-guard.sh" \
+   && grep -q 'reports_unreadable' "$HOOK" && grep -q 'reports_unreadable' "$here/reports-guard.sh"; then
+  ok "pre-push の写しと reports-guard.sh の検査が一致する"
+else
+  ng "検査が食い違っている: guard=[$gp] hook=[$hp]"
+fi
+# コミットのツリーを読めなければ、信用できない側に倒す
+mkrepo "$T/r4"; obj="$(git -C "$T/r4" rev-parse HEAD^{tree})"
+rm -f "$T/r4/.git/objects/${obj:0:2}/${obj:2}"
+( . "$here/reports-guard.sh"; reports_untrusted "$T/r4" ) && ok "コミットのツリーを読めなければ信用しない" || ng "読めないツリーを信用した"
+# 一時ファイルの名前は予測できない
+! grep -q '".tmp"' "$RR" && grep -q 'mkstemp' "$RR" && ok "run-reviews.sh の一時ファイルは mkstemp で作る" || ng "予測できる .tmp が残っている"
+
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]

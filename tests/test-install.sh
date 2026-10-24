@@ -124,6 +124,9 @@ chmod 755 "$T/home10/.claude/skills/ai-review"
 echo "4k. フックの一時ファイルの名前は予測できない"
 ! grep -q 'pre-push.new.\$\$' "$INSTALL" && ok "一時ファイルを mktemp で作る" || ng "PID の一時ファイル名が残っている"
 
+echo "4k2. 退避先の名前も予測できない"
+! grep -q 'pre-push.bak.\$ts"' "$INSTALL" && ok "退避先を mktemp で作る" || ng "時刻だけの退避先の名前が残っている"
+
 echo "4l. --hook-only はフックだけを入れる（プラグインでスキルを入れた人向け）"
 rm -rf "$T/home8"; mkdir -p "$T/home8"
 HOME="$T/home8" GIT_CONFIG_GLOBAL="$T/home8/.gitconfig" bash "$INSTALL" --hook-only >"$T/out9" 2>&1; rc=$?

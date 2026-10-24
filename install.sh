@@ -126,7 +126,7 @@ else
 fi
 mkdir -p "$hooks"
 if [ $replace_hook -eq 1 ]; then
-  cp "$hooks/pre-push" "$hooks/pre-push.bak.$ts"; echo "  既存の pre-push を ${hooks}/pre-push.bak.${ts} に退避しました"
+  bak="$(mktemp "$hooks/pre-push.bak.$ts.XXXXXX")"; cp "$hooks/pre-push" "$bak"; echo "  既存の pre-push を ${bak} に退避しました"
 fi
 if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hooks/pre-push"; then
   chmod +x "$hooks/pre-push"
