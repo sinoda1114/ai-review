@@ -747,13 +747,14 @@ def cmd_record(a):
         taken.add(cid)
         return cid
     if incremental and a.run:
-        # 削除・名前変更の旧パスも含む一覧（changed-files-all.txt）を使う。判定表用の changed-files.txt は削除を除いている
-        for name in ("changed-files.txt", "changed-files-all.txt"):
-            try:
-                with open(os.path.join(a.run, name), encoding="utf-8") as f:
-                    changed |= {_repo_path(ln.strip()) for ln in f if ln.strip()}
-            except OSError:
-                pass
+        # 削除・名前変更の旧パスも含む一覧（changed-files-all.nul。NUL 区切り）を使う。判定表用の changed-files.txt は
+        # 削除を除き、改行区切りなので使わない。git が出したパスはそのまま比べる（strip や _repo_path の整形をすると、
+        # 改行・末尾の空白・:行番号 を含む名前のファイルで別のパスを「差分にある」と見せかけられる。ai-review#5 の 8）
+        try:
+            with open(os.path.join(a.run, "changed-files-all.nul"), encoding="utf-8", errors="surrogateescape") as f:
+                changed = {p for p in f.read().split("\0") if p}
+        except OSError:
+            pass  # 一覧が無ければ、差分にあると確かめられないので fixed は open に戻る
     if prev.get("branch") == a.branch and prev.get("head_sha") and prev.get("head_sha") != a.head:
         for it in prev.get("must_address") or []:
             if not isinstance(it, dict):

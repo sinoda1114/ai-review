@@ -733,6 +733,16 @@ run --out .review-reports/t5b; rec13 .review-reports/t5b --verdict pass >/dev/nu
 git config --unset core.quotePath
 [ "$(sget .review-reports/t5b/scope.json scope)" = "incremental" ] || ng "t5b が差分レビューにならない: $(cat .review-reports/t5b/scope.json)"
 case " $(ids) " in *" prev-J1:fixed "*) ok "日本語名のファイルを消して直した fixed も再レビュー済み（T5）" ;; *) ng "T5: $(ids)" ;; esac
+# T5n: 改行・末尾の空白・:行番号 を含む名前のファイルで、fixed のファイルが「差分にある」と見せかけない（ai-review#5 の 8）
+G checkout -q -b f8 origin/main
+echo 1 > n8.js; echo 2 > n9.js; G add n8.js n9.js; G commit -qm big
+run --out .review-reports/t5n1; rec13 .review-reports/t5n1 --verdict must-address --items "$(mk N1 n8.js MUST-ADDRESS correctness n false t5n)" >/dev/null 2>&1
+bash "$RI" --id N1 --fixed --note "直した（嘘）" >/dev/null 2>&1
+nlname="$(printf 'n8.js\nzz')"
+echo x > "$nlname"; echo x > 'n8.js '; echo x > 'n8.js:12'; G add -- "$nlname" 'n8.js ' 'n8.js:12'; G commit -qm trick
+run --out .review-reports/t5n2; rec13 .review-reports/t5n2 --verdict pass >/dev/null 2>&1
+[ "$(sget .review-reports/t5n2/scope.json scope)" = "incremental" ] || ng "t5n2 が差分レビューにならない: $(cat .review-reports/t5n2/scope.json)"
+case " $(ids) " in *" carry-N1:open "*) ok "改行・空白・:行番号 を含む名前のファイルでは、別のファイルの fixed を再レビュー済みにしない（T5n）" ;; *) ng "T5n: $(ids)" ;; esac
 # T6・T7: 引き継ぎだけでも must-address で記録でき、同じ run を記録し直せる
 G checkout -q -b f6 origin/main
 echo 1 > s1.js; echo 2 > s2.js; G add s1.js s2.js; G commit -qm big
