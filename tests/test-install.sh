@@ -212,7 +212,13 @@ chmod 1777 "$T/home23/shared"
 HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
 [ $rc -eq 0 ] && ok "スティッキービット付きの親（/tmp と同じ形）は通す" || ng "スティッキーで止まった rc=$rc $(tail -2 "$T/out24")"
 chmod 755 "$T/home23/shared"
+personal=0   # install.sh と同じ条件で、利用者の専用グループかを決める
 if [ "$(id -gn)" = "$(id -un)" ]; then
+  if ! command -v getent >/dev/null 2>&1; then personal=1
+  elif [ -z "$(getent group "$(id -gn)" | cut -d: -f4 | tr ',' '\n' | grep -vxF "$(id -un)")" ] \
+    && [ "$(getent passwd | awk -F: -v g="$(id -g)" '$4 == g' | wc -l | tr -d ' ')" -le 1 ]; then personal=1; fi
+fi
+if [ $personal -eq 1 ]; then
   chgrp "$(id -g)" "$T/home23/shared"; chmod 775 "$T/home23/shared"
   HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
   [ $rc -eq 0 ] && ok "利用者の専用グループで書き込める親は通す（Ubuntu などの umask 002）" || ng "専用グループで止まった rc=$rc $(tail -2 "$T/out24")"
@@ -231,6 +237,29 @@ HOME="$T/home24" GIT_CONFIG_GLOBAL="$T/home24/.gitconfig" git config --global co
 HOME="$T/home24" GIT_CONFIG_GLOBAL="$T/home24/.gitconfig" bash "$INSTALL" >"$T/out25" 2>&1; rc=$?
 chmod 755 "$T/home24/shared"
 [ $rc -ne 0 ] && [ ! -e "$T/home24/real-hooks/pre-push" ] && ok "他人が書き込める場所に置いたリンクの先には入れない" || ng "リンクを置いた場所の確認なし rc=$rc"
+
+echo "4y3. 書き込める場所が、入れ子のリンクの途中にあっても見つける"
+rm -rf "$T/home27"; mkdir -p "$T/home27/shared" "$T/home27/real"; chmod 755 "$T/home27/real"; chmod 777 "$T/home27/shared"
+ln -s "$T/home27/shared" "$T/home27/L1"; ln -s "$T/home27/real" "$T/home27/shared/hooks"
+HOME="$T/home27" GIT_CONFIG_GLOBAL="$T/home27/.gitconfig" git config --global core.hooksPath "$T/home27/L1/hooks"
+HOME="$T/home27" GIT_CONFIG_GLOBAL="$T/home27/.gitconfig" bash "$INSTALL" >"$T/out28" 2>&1; rc=$?
+chmod 755 "$T/home27/shared"
+[ $rc -ne 0 ] && [ ! -e "$T/home27/real/pre-push" ] && grep -q "home27/shared（" "$T/out28" && ok "入れ子のリンクの途中の書き込める場所を名指しして止まる" || ng "入れ子のリンク: rc=$rc $(tail -2 "$T/out28")"
+
+echo "4y4. 途中が普通のファイルなら、権限ではなくその理由で止まる"
+rm -rf "$T/home28"; mkdir -p "$T/home28"; echo x > "$T/home28/notes.txt"
+HOME="$T/home28" GIT_CONFIG_GLOBAL="$T/home28/.gitconfig" git config --global core.hooksPath "$T/home28/notes.txt/hooks"
+HOME="$T/home28" GIT_CONFIG_GLOBAL="$T/home28/.gitconfig" bash "$INSTALL" >"$T/out29" 2>&1; rc=$?
+[ $rc -ne 0 ] && grep -q 'ディレクトリではありません' "$T/out29" && [ ! -e "$T/home28/.claude" ] && ok "途中のファイルを理由に止まる" || ng "途中のファイル: rc=$rc $(tail -2 "$T/out29")"
+
+echo "4y5. 本人が作れない置き場所なら、スキルにも設定にも触らずに止まる"
+if [ "$(id -u)" -eq 0 ]; then echo "  SKIP root はどこでも作れる"; else
+rm -rf "$T/home29"; mkdir -p "$T/home29/ro"; chmod 555 "$T/home29/ro"
+HOME="$T/home29" GIT_CONFIG_GLOBAL="$T/home29/.gitconfig" git config --global core.hooksPath "$T/home29/ro/hooks"
+HOME="$T/home29" GIT_CONFIG_GLOBAL="$T/home29/.gitconfig" bash "$INSTALL" >"$T/out30" 2>&1; rc=$?
+chmod 755 "$T/home29/ro"
+[ $rc -ne 0 ] && [ ! -e "$T/home29/.claude" ] && ok "置き場所を作れないときはスキルを入れない" || ng "作れない置き場所: rc=$rc $(ls -a "$T/home29" | tr '\n' ' ')"
+fi
 
 echo "4v3. パスの途中にリンク先の無いリンクがあれば、何も書き換えずに止まる"
 rm -rf "$T/home25"; mkdir -p "$T/home25"; ln -s "$T/home25/missing" "$T/home25/x"

@@ -11,7 +11,8 @@
 #
 # 何度実行しても同じ結果になる。本物の ~/.claude・~/.gitconfig を書き換えるので、内容を読んでから実行すること。
 # 競合などで止まるときは、何も書き換えない（確かめる処理をすべて先に行う）。
-# 例外は最後の実効値の確認だけで、先の確認をすり抜けた上書きがあると、入れた後に止まる。
+# 例外は 2 つ。止まる前に、フックの置き場所のディレクトリだけは作っていることがある（umask 022 で作る）。
+# また、最後の実効値の確認は、先の確認をすり抜けた上書きがあると、入れた後に止まる。
 set -euo pipefail
 
 force=0; copy=0; hook_only=0
@@ -20,7 +21,7 @@ for a in "$@"; do
     --force) force=1 ;;
     --copy) copy=1 ;;
     --hook-only) hook_only=1 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "unknown option: ${a}" >&2; exit 2 ;;
   esac
 done
@@ -92,23 +93,31 @@ unsafe_dir() {  # 親として危ないなら真。本人か root の持ち物�
   [ -z "$(find -H "$1" -maxdepth 0 -perm -1000 2>/dev/null)" ] && writable_by_others "$1" && return 0
   return 1
 }
-unsafe_chain() {  # $1 の親を / まで 1 段ずつ確かめる（$1 自身は含めない）。リンクはそれ自身の mode に意味が無いので、置いた場所（その親）で見る
-  local d="$1"
-  while [ "$d" != / ]; do
-    d="$(dirname "$d")"
-    [ -L "$d" ] && continue
-    [ -e "$d" ] || continue
-    unsafe_dir "$d" && return 0
+unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リンクは中身を展開して続ける。カーネルがパスを解決する順と同じ）。
+                  # 通るディレクトリが危ないか、リンクの持ち主が本人・root でなければ、その場所と理由を出して真
+  local cur=/ rest="$1" comp next target hops=0 uid
+  if unsafe_dir /; then printf '%s' "/（持ち主か権限）"; return 0; fi
+  while [ -n "$rest" ]; do
+    rest="${rest#/}"; comp="${rest%%/*}"
+    if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    case "$comp" in ""|.) continue ;; ..) cur="$(dirname "$cur")"; continue ;; esac
+    next="${cur%/}/$comp"
+    if [ -L "$next" ]; then
+      hops=$((hops + 1))
+      [ $hops -le 40 ] || { printf '%s' "${next}（リンクが多すぎます）"; return 0; }
+      uid="$(ls -ldn "$next" | awk '{print $3}')"
+      [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || { printf '%s' "${next}（リンクの持ち主が本人でも root でもありません）"; return 0; }
+      target="$(readlink "$next")"
+      case "$target" in /*) cur=/ ;; esac   # 相対のリンクは、リンクを置いた場所から
+      rest="$target${rest:+/$rest}"
+      continue
+    fi
+    [ -e "$next" ] || return 1   # ここから先はまだ無い（umask 022 で作る）
+    [ -d "$next" ] || { printf '%s' "${next}（ディレクトリではありません）"; return 0; }
+    if unsafe_dir "$next"; then printf '%s' "${next}（持ち主か権限）"; return 0; fi
+    cur="$next"
   done
   return 1
-}
-unsafe_parents() {  # 置き場所の親に、他人が中身やリンクを入れ替えられるものがあれば真
-  local d="$1"
-  unsafe_chain "$d" && return 0   # 書かれたままの形（途中のリンクを置いた場所も見る）
-  while [ ! -e "$d" ]; do d="$(dirname "$d")"; done   # まだ無いなら、作る場所になる一番近い親
-  d="$(cd "$d" 2>/dev/null && pwd -P)" || return 0
-  [ "$d" != "$(cd "$1" 2>/dev/null && pwd -P)" ] && unsafe_dir "$d" && return 0
-  unsafe_chain "$d"                # リンクをたどった先の実体の形
 }
 broken_link_in() {  # $1 かその途中に、リンク先の無いシンボリックリンクがあれば、それを出して真
   local d="$1"
@@ -122,6 +131,11 @@ norm_path() {  # git と同じく先頭の ~ を展開し、末尾の / を落�
   local v="${1/#\~/$HOME}"
   [ "$v" = / ] || v="${v%/}"
   printf '%s' "$v"
+}
+same_place() {  # 2 つの書き方が同じ場所を指すなら真（あるディレクトリは実体の形で比べる）
+  local a b; a="$(norm_path "$1")"; b="$(norm_path "$2")"
+  [ "$a" = "$b" ] && return 0
+  [ -d "$a" ] && [ -d "$b" ] && [ "$(cd "$a" && pwd -P)" = "$(cd "$b" && pwd -P)" ]
 }
 
 # フックの置き場所を決める（まだ書き換えない）
@@ -149,8 +163,9 @@ if [ -e "$hooks" ] && [ ! -d "$hooks" ]; then
   echo "フックの置き場所（${hooks}）がディレクトリではありません。core.hooksPath を直してから実行してください。" >&2
   exit 1
 fi
-if unsafe_parents "$hooks"; then
-  echo "フックの置き場所（${hooks}）の親に、自分か root の持ち物でないか、他人（専用でないグループを含む）が書き込めるディレクトリがあります。置き場所ごと差し替えられるので、権限を直すか別の場所にしてください。" >&2
+if problem="$(unsafe_route "$hooks")"; then
+  echo "フックの置き場所（${hooks}）までの途中に問題があります: ${problem}" >&2
+  echo "自分か root の持ち物でないか、他人（専用でないグループを含む）が書き込める場所があると、置き場所ごと差し替えられます。直すか別の場所にしてください。" >&2
   exit 1
 fi
 if [ -e "$hooks" ] && unsafe_path "$hooks"; then
@@ -159,7 +174,7 @@ if [ -e "$hooks" ] && unsafe_path "$hooks"; then
 fi
 # global より強い指定（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS・git -c）があると、ここに入れてもゲートが動かない
 if scope="$(cd / && git config --show-scope --get core.hooksPath 2>/dev/null)" && [ "${scope%%$'\t'*}" = "command" ] \
-  && [ "$(norm_path "${scope#*$'\t'}")" != "$hooks" ]; then
+  && ! same_place "${scope#*$'\t'}" "$hooks"; then
   echo "core.hooksPath が環境変数（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS）か git -c で ${scope#*$'\t'} に上書きされていて、ゲートが動きません。外してから実行してください。" >&2
   exit 1
 fi
@@ -179,6 +194,18 @@ if [ -e "$hooks/pre-push" ] && ! cmp -s "$new" "$hooks/pre-push"; then
     exit 1
   fi
   replace_hook=1
+fi
+
+# 置き場所を先に作り、作った後の持ち主と権限を確かめる（止まるときに、スキルや設定を書き換えずに済むように）
+if [ ! -e "$hooks" ]; then
+  ( umask 022; mkdir -p "$hooks" ) || { echo "フックの置き場所（${hooks}）を作れません。権限を確かめてください。" >&2; exit 1; }
+  problem=""
+  # 確かめてから作るまでの間に、他人が途中を先に作っていないか
+  if problem="$(unsafe_route "$hooks")" || unsafe_path "$hooks"; then
+    echo "== 失敗: 作ったフックの置き場所（${hooks}）か途中の持ち主・権限が想定と違います（${problem:-置き場所}）。ほかは書き換えていません" >&2
+    exit 1
+  fi
+  echo "  フックの置き場所を作りました: ${hooks}"
 fi
 
 echo "== スキルの導入"
@@ -212,14 +239,6 @@ if [ $set_hooks_path -eq 1 ]; then
 else
   echo "  既存の core.hooksPath を使います: ${hooks}"
 fi
-if [ ! -e "$hooks" ]; then
-  ( umask 022; mkdir -p "$hooks" )   # umask 002 でも、途中の親を含めてグループが書き込める置き場所を作らない
-  # 確かめてから作るまでの間に、他人が途中を先に作っていないか
-  if unsafe_parents "$hooks" || unsafe_path "$hooks"; then
-    echo "== 失敗: 作ったフックの置き場所（${hooks}）か、その親の持ち主・権限が想定と違います。フックは入れていません" >&2
-    exit 1
-  fi
-fi
 if [ $replace_hook -eq 1 ]; then
   cp "$hooks/pre-push" "$hooks/pre-push.bak.$ts"; echo "  既存の pre-push を ${hooks}/pre-push.bak.${ts} に退避しました"
 fi
@@ -235,7 +254,7 @@ fi
 # 実際に効く値を確かめる（書き換える前の確認をすり抜けた上書きの最後の網）
 eff="$(cd / && git config --get core.hooksPath || true)"
 eff="$(norm_path "$eff")"
-if [ "$eff" != "$hooks" ]; then
+if ! same_place "$eff" "$hooks"; then
   echo "== 失敗: 実際に効く core.hooksPath は ${eff:-（未設定）} で、フックを入れた ${hooks} と違うため、ゲートが動きません" >&2
   echo "   GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS などの環境変数や、~/.gitconfig の include を確かめてください" >&2
   echo "   （スキルとフックは入った状態で止まっています。直したら、もう一度実行してください）" >&2
