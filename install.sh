@@ -104,10 +104,14 @@ writable_by_others() {  # $1 を他人か、専用でないグループが書き
 unsafe_path() {  # 自分の持ち物でないか、他人が書き込めるなら真
   [ ! -O "$1" ] || writable_by_others "$1"
 }
-unsafe_dir() {  # 親として危ないなら真。本人か root の持ち物で、他人が書き込めない（またはスティッキービット付きの /tmp の形）なら安全
+is_system_tmp() {  # root の持ち物でスティッキービット付き（/tmp の形）なら真。中の他人の持ち物は消せず、改名もできない
+  [ "$(ls -ldnL "$1" | awk '{print $3}')" = 0 ] && [ -n "$(find -H "$1" -maxdepth 0 -perm -1000 2>/dev/null)" ]
+}
+unsafe_dir() {  # 親として危ないなら真。本人か root の持ち物で、他人が書き込めない（または /tmp の形）なら安全
   local uid; uid="$(ls -ldnL "$1" | awk '{print $3}')"
   [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || return 0
-  [ -z "$(find -H "$1" -maxdepth 0 -perm -1000 2>/dev/null)" ] && writable_by_others "$1" && return 0
+  is_system_tmp "$1" && return 1
+  writable_by_others "$1" && return 0
   return 1
 }
 unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リンクは中身を展開して続ける。カーネルがパスを解決する順と同じ）。
@@ -215,6 +219,17 @@ if problem="$(unsafe_route "$hooks")"; then
   echo "自分か root の持ち物でないか、他人（専用でないグループを含む）が書き込める場所があると、置き場所ごと差し替えられます。直すか別の場所にしてください。" >&2
   exit 1
 fi
+# /tmp の形の場所を通るなら、置き場所が消えた後に他人に同じ名前で作り直されうる（再起動や定期の掃除で消える）
+d="$hooks"; while [ ! -e "$d" ]; do d="$(dirname "$d")"; done
+d="$(cd "$d" 2>/dev/null && pwd -P || true)"
+while [ -n "$d" ]; do
+  if is_system_tmp "$d"; then
+    echo "== 注意: フックの置き場所（${hooks}）が、誰でも書き込める ${d} の下にあります。消えると他人に作り直されることがあるので、ホームの下に置くことを勧めます" >&2
+    break
+  fi
+  [ "$d" = / ] && break
+  d="$(dirname "$d")"
+done
 if [ -e "$hooks" ] && [ ! -O "$hooks" ]; then
   echo "フックの置き場所（${hooks}）が自分の持ち物ではありません。自分の持ち物の場所に core.hooksPath を設定し直してから実行してください。" >&2
   exit 1

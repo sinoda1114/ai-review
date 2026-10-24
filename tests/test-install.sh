@@ -212,7 +212,8 @@ HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/o
 [ $rc -ne 0 ] && [ ! -e "$T/home23/shared/hooks/pre-push" ] && [ ! -e "$T/home23/.claude" ] && ok "グループが書き込める親の下には入れない" || ng "親の確認なし rc=$rc $(tail -2 "$T/out24")"
 chmod 1777 "$T/home23/shared"
 HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
-[ $rc -eq 0 ] && ok "スティッキービット付きの親（/tmp と同じ形）は通す" || ng "スティッキーで止まった rc=$rc $(tail -2 "$T/out24")"
+if [ "$(id -u)" -eq 0 ]; then echo "  SKIP root の持ち物は /tmp の形として通す"
+else [ $rc -ne 0 ] && grep -q 'home23/shared（' "$T/out24" && ok "本人の持ち物でも、他人が書き込めるスティッキービット付きの親は止める（root の /tmp の形だけ通す）" || ng "本人のスティッキーの親を通した rc=$rc $(tail -2 "$T/out24")"; fi
 chmod 755 "$T/home23/shared"
 personal=0   # install.sh と同じ条件で、利用者の専用グループかを決める
 if [ "$(id -gn)" = "$(id -un)" ] && [ "$(id -g)" = "$(id -u)" ] && command -v getent >/dev/null 2>&1; then
@@ -382,6 +383,15 @@ printf '[includeIf "gitdir:/my projects/"]\n\tpath = cond.gitconfig\n' > "$T/hom
 printf '[include]\n\tpath = %s\n' "$T/home26/設定 dir/main.gitconfig" > "$T/home26/.gitconfig"
 HOME="$T/home26" GIT_CONFIG_GLOBAL="$T/home26/.gitconfig" bash "$INSTALL" >"$T/out27" 2>&1; rc=$?
 [ $rc -eq 0 ] && grep -q 'includeIf' "$T/out27" && ok "空白・日本語を含む includeIf も見つける" || ng "空白入りの includeIf: rc=$rc"
+
+echo "4y6. 置き場所が /tmp のような誰でも書き込める場所の下なら、消えた後に作り直されうると知らせる"
+if [ -k /tmp ] && [ "$(ls -ldn /tmp/ | awk '{print $3}')" = 0 ]; then
+  rm -rf "$T/home49"; mkdir -p "$T/home49"; tmph="$(mktemp -d /tmp/ai-review-hooks.XXXXXX)"
+  HOME="$T/home49" GIT_CONFIG_GLOBAL="$T/home49/.gitconfig" git config --global core.hooksPath "$tmph"
+  HOME="$T/home49" GIT_CONFIG_GLOBAL="$T/home49/.gitconfig" bash "$INSTALL" >"$T/out52" 2>&1; rc=$?
+  rm -rf "$tmph"
+  [ $rc -eq 0 ] && grep -q '作り直される' "$T/out52" && ok "/tmp の下の置き場所には注意を出す" || ng "/tmp の注意なし rc=$rc $(tail -2 "$T/out52")"
+else echo "  SKIP /tmp が root のスティッキービット付きでない"; fi
 
 echo "4x. 置き場所の途中の親も、umask 002 でグループに書き込ませない"
 rm -rf "$T/home19"; mkdir -p "$T/home19"
