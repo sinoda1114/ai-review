@@ -11,6 +11,7 @@
 #
 # 何度実行しても同じ結果になる。本物の ~/.claude・~/.gitconfig を書き換えるので、内容を読んでから実行すること。
 # 競合などで止まるときは、何も書き換えない（確かめる処理をすべて先に行う）。
+# 例外は最後の実効値の確認だけで、先の確認をすり抜けた上書きがあると、入れた後に止まる。
 set -euo pipefail
 
 force=0; copy=0; hook_only=0
@@ -19,7 +20,7 @@ for a in "$@"; do
     --force) force=1 ;;
     --copy) copy=1 ;;
     --hook-only) hook_only=1 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown option: ${a}" >&2; exit 2 ;;
   esac
 done
@@ -89,12 +90,17 @@ else
   esac
 fi
 # 置き場所をグループや他人が書き換えられると、フックを差し替えられる
+if [ -L "$hooks" ] && [ ! -e "$hooks" ]; then
+  echo "フックの置き場所（${hooks}）が、リンク先の無いシンボリックリンクです。リンク先を作るか、core.hooksPath を直してから実行してください。" >&2
+  exit 1
+fi
 if [ -e "$hooks" ] && unsafe_path "$hooks"; then
   echo "フックの置き場所（${hooks}）が自分の持ち物でないか、グループ・他人が書き込めます。権限を直してから実行してください（例: chmod go-w ${hooks}）。" >&2
   exit 1
 fi
 # global より強い指定（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS・git -c）があると、ここに入れてもゲートが動かない
-if scope="$(cd / && git config --show-scope --get core.hooksPath 2>/dev/null)" && [ "${scope%%$'\t'*}" = "command" ]; then
+if scope="$(cd / && git config --show-scope --get core.hooksPath 2>/dev/null)" && [ "${scope%%$'\t'*}" = "command" ] \
+  && [ "${scope#*$'\t'}" != "$hooks" ]; then
   echo "core.hooksPath が環境変数（GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS）か git -c で ${scope#*$'\t'} に上書きされていて、ゲートが動きません。外してから実行してください。" >&2
   exit 1
 fi
@@ -148,7 +154,7 @@ else
   echo "  既存の core.hooksPath を使います: ${hooks}"
 fi
 if [ ! -e "$hooks" ]; then
-  mkdir -p "$hooks"; chmod go-w "$hooks"   # umask 002 でも、グループが書き込める置き場所を作らない
+  ( umask 022; mkdir -p "$hooks" )   # umask 002 でも、途中の親を含めてグループが書き込める置き場所を作らない
 fi
 if [ $replace_hook -eq 1 ]; then
   cp "$hooks/pre-push" "$hooks/pre-push.bak.$ts"; echo "  既存の pre-push を ${hooks}/pre-push.bak.${ts} に退避しました"
@@ -168,11 +174,12 @@ eff="${eff/#\~/$HOME}"
 if [ "$eff" != "$hooks" ]; then
   echo "== 失敗: 実際に効く core.hooksPath は ${eff:-（未設定）} で、フックを入れた ${hooks} と違うため、ゲートが動きません" >&2
   echo "   GIT_CONFIG_COUNT・GIT_CONFIG_PARAMETERS などの環境変数や、~/.gitconfig の include を確かめてください" >&2
+  echo "   （スキルとフックは入った状態で止まっています。直したら、もう一度実行してください）" >&2
   exit 1
 fi
 
 # includeIf の中で core.hooksPath を設定していると、その条件に当たるリポジトリでは別の置き場所が使われる
-if (cd / && git config --global --get-regexp '^includeif\.' >/dev/null 2>&1); then
+if (cd / && git config --global --includes --get-regexp '^includeif\.' >/dev/null 2>&1); then
   echo "== 注意: グローバルの設定に includeIf があります。その中で core.hooksPath を設定していると、条件に当たるリポジトリではゲートが動きません" >&2
 fi
 

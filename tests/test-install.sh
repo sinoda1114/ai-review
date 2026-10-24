@@ -159,10 +159,37 @@ chmod 777 "$T/home/.git-hooks/pre-push"; inst
 [ -z "$(find "$T/home/.git-hooks/pre-push" -perm -0002)" ] && [ -x "$T/home/.git-hooks/pre-push" ] && ok "書き込める mode の pre-push を置き直す" || ng "777 のまま残った"
 
 echo "4t. 導入先のディレクトリに入れないとき、別の理由で止まったと誤って言わない"
+if [ "$(id -u)" -eq 0 ]; then echo "  SKIP root では chmod 000 が効かない"; else
 rm -rf "$T/home15"; mkdir -p "$T/home15/.claude/skills/ai-review"; chmod 000 "$T/home15/.claude/skills/ai-review"
 HOME="$T/home15" GIT_CONFIG_GLOBAL="$T/home15/.gitconfig" bash "$INSTALL" >"$T/out16" 2>&1; rc=$?
 chmod 755 "$T/home15/.claude/skills/ai-review"
 [ $rc -ne 0 ] && ! grep -q '中にあります' "$T/out16" && ok "入れないことを理由に止まる" || ng "誤った理由: rc=$rc $(tail -2 "$T/out16")"
+fi
+
+echo "4u. include 先のファイルにある includeIf も知らせる"
+rm -rf "$T/home16"; mkdir -p "$T/home16"
+printf '[includeIf "gitdir:/nowhere/"]\n\tpath = /nowhere.gitconfig\n' > "$T/home16/inc.gitconfig"
+printf '[include]\n\tpath = %s\n' "$T/home16/inc.gitconfig" > "$T/home16/.gitconfig"
+HOME="$T/home16" GIT_CONFIG_GLOBAL="$T/home16/.gitconfig" bash "$INSTALL" >"$T/out17" 2>&1; rc=$?
+[ $rc -eq 0 ] && grep -q 'includeIf' "$T/out17" && ok "入れ子の includeIf も見つける" || ng "入れ子の includeIf: rc=$rc"
+
+echo "4v. 置き場所がリンク先の無いシンボリックリンクなら、何も書き換えずに止まる"
+rm -rf "$T/home17"; mkdir -p "$T/home17"; ln -s "$T/home17/missing" "$T/home17/hooks"
+HOME="$T/home17" GIT_CONFIG_GLOBAL="$T/home17/.gitconfig" git config --global core.hooksPath "$T/home17/hooks"
+HOME="$T/home17" GIT_CONFIG_GLOBAL="$T/home17/.gitconfig" bash "$INSTALL" >"$T/out18" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/home17/.claude" ] && grep -q 'リンク' "$T/out18" && ok "壊れたリンクの置き場所では止まる" || ng "壊れたリンク: rc=$rc $(tail -2 "$T/out18")"
+
+echo "4w. 環境変数の上書きが置き場所と同じなら止めない"
+rm -rf "$T/home18"; mkdir -p "$T/home18"
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$T/home18/.git-hooks" \
+  HOME="$T/home18" GIT_CONFIG_GLOBAL="$T/home18/.gitconfig" bash "$INSTALL" >"$T/out19" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -x "$T/home18/.git-hooks/pre-push" ] && ok "同じ値の上書きなら入れる" || ng "同じ値で止まった rc=$rc $(tail -2 "$T/out19")"
+
+echo "4x. 置き場所の途中の親も、umask 002 でグループに書き込ませない"
+rm -rf "$T/home19"; mkdir -p "$T/home19"
+HOME="$T/home19" GIT_CONFIG_GLOBAL="$T/home19/.gitconfig" git config --global core.hooksPath "$T/home19/a/b/hooks"
+( umask 002; HOME="$T/home19" GIT_CONFIG_GLOBAL="$T/home19/.gitconfig" bash "$INSTALL" >"$T/out20" 2>&1 ); rc=$?
+[ $rc -eq 0 ] && [ -z "$(find "$T/home19/a" "$T/home19/a/b" "$T/home19/a/b/hooks" -perm -0020)" ] && ok "作った親もグループに書き込ませない" || ng "親の権限: rc=$rc $(ls -ld "$T/home19/a")"
 
 echo "4o. claude が無ければ何も書き換えずに止まる"
 mkdir -p "$T/bin-noclaude"; for c in git python3 dirname date sed mktemp; do p="$(command -v "$c")" && ln -sf "$p" "$T/bin-noclaude/$c"; done
