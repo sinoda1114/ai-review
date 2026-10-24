@@ -27,6 +27,9 @@ for a in "$@"; do
 done
 [ $hook_only -eq 1 ] && [ $copy -eq 1 ] && { echo "--hook-only と --copy は一緒に使えません（--hook-only はスキルを入れません）" >&2; exit 2; }
 
+# 設定の読み取りを、実行した場所や環境に左右されないようにする（GIT_CONFIG は --file の代わりになり、GIT_DIR は includeIf の判定に使われる）
+unset GIT_CONFIG GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
+
 MARK='# ai-review-managed-hook'   # このフックが入れたものかどうかを見分ける印の行
 repo="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 src="$repo/skills/ai-review"
@@ -143,8 +146,10 @@ norm_path() {  # git と同じく先頭の ~ と ~/ を展開し、末尾の / �
   [ "$v" = / ] || v="${v%/}"
   printf '%s' "$v"
 }
-same_place() {  # 2 つの書き方が同じ場所を指すなら真（あるディレクトリは実体の形で比べる）
+same_place() {  # 2 つの書き方が同じ場所を指すなら真（あるディレクトリは実体の形で比べる。相対パスは git がリポジトリごとに解決するので、同じとみなさない）
   local a b; a="$(norm_path "$1")"; b="$(norm_path "$2")"
+  case "$a" in /*) ;; *) return 1 ;; esac
+  case "$b" in /*) ;; *) return 1 ;; esac
   [ "$a" = "$b" ] && return 0
   [ -d "$a" ] && [ -d "$b" ] && [ "$(cd "$a" && pwd -P)" = "$(cd "$b" && pwd -P)" ]
 }
@@ -226,6 +231,14 @@ if [ ! -e "$hooks" ]; then
   fi
   echo "  フックの置き場所を作りました: ${hooks}"
 fi
+if [ ! -w "$hooks" ] || [ ! -x "$hooks" ]; then
+  echo "フックの置き場所（${hooks}）に書き込めません。権限を確かめてから実行してください。" >&2
+  exit 1
+fi
+if [ $replace_hook -eq 1 ] && [ -d "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ]; then
+  echo "${hooks}/pre-push がディレクトリです。中身を確かめて退避してから実行してください。" >&2
+  exit 1
+fi
 
 echo "== スキルの導入"
 if [ $hook_only -eq 1 ]; then
@@ -251,13 +264,6 @@ fi
 fi
 
 echo "== pre-push フックの導入"
-if [ $set_hooks_path -eq 1 ]; then
-  git config --global core.hooksPath "$hooks"
-  echo "  core.hooksPath を ${hooks} に設定しました"
-  echo "  （各リポジトリの .git/hooks/pre-push は、このフックが通った後に呼び継ぎます。pre-commit など他の種類のフックは動かなくなるので、使っている場合は ${hooks} に置いてください）"
-else
-  echo "  既存の core.hooksPath を使います: ${hooks}"
-fi
 if [ $replace_hook -eq 1 ]; then
   cp -P "$hooks/pre-push" "$hooks/pre-push.bak.$ts"; echo "  既存の pre-push を ${hooks}/pre-push.bak.${ts} に退避しました"
 fi
@@ -268,6 +274,14 @@ else
   # 同じディレクトリに書いてから mv で置き換える（既存のフックがリンクでも、リンク先を書き換えない）
   tmp_hook="$(mktemp "$hooks/.pre-push.new.XXXXXX")"; cp "$new" "$tmp_hook"; chmod +x "$tmp_hook"; mv -f "$tmp_hook" "$hooks/pre-push"; tmp_hook=""
   echo "  入れました: ${hooks}/pre-push"
+fi
+# core.hooksPath はフックを置いた後に書く（途中で止まっても、ゲートの無い置き場所を指したままにしない）
+if [ $set_hooks_path -eq 1 ]; then
+  git config --global core.hooksPath "$hooks"
+  echo "  core.hooksPath を ${hooks} に設定しました"
+  echo "  （各リポジトリの .git/hooks/pre-push は、このフックが通った後に呼び継ぎます。pre-commit など他の種類のフックは動かなくなるので、使っている場合は ${hooks} に置いてください）"
+else
+  echo "  既存の core.hooksPath を使います: ${hooks}"
 fi
 
 # 実際に効く値を確かめる（書き換える前の確認をすり抜けた上書きの最後の網）

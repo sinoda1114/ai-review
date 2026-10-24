@@ -2,7 +2,7 @@
 # install.sh の回帰テスト。HOME を一時ディレクトリに差し替えて動かし、本物の ~/.claude や ~/.gitconfig には触らない。
 #   使い方: tests/test-install.sh
 set -u
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)"
 INSTALL="$root/install.sh"
 [ -f "$INSTALL" ] || { echo "見つからない: $INSTALL" >&2; exit 2; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/install-test.XXXXXX")" || exit 2
@@ -295,9 +295,29 @@ rm -rf "$T/home33"; mkdir -p "$T/home33/.git-hooks"; ln -s "$T/home33/mine" "$T/
 HOME="$T/home33" GIT_CONFIG_GLOBAL="$T/home33/.gitconfig" bash "$INSTALL" >"$T/out36" 2>&1; rc=$?
 [ $rc -ne 0 ] && [ -L "$T/home33/.git-hooks/pre-push" ] && ok "壊れたリンクのフックも別のフックとして扱う" || ng "壊れたリンクを置き換えた rc=$rc"
 
-echo "4z6. CDPATH があっても動く"
-CDPATH="$T" inst; rc=$?
-[ $rc -eq 0 ] && ok "CDPATH の影響を受けない" || ng "CDPATH: rc=$rc $(tail -2 "$T/out")"
+echo "4z6. CDPATH に同じ名前の場所があっても、相対パスで呼んだ install.sh は自分の場所を使う"
+rm -rf "$T/decoy" "$T/home34"; mkdir -p "$T/decoy/$(basename "$root")/skills/ai-review" "$T/home34"; echo decoy > "$T/decoy/$(basename "$root")/skills/ai-review/SKILL.md"
+( cd "$(dirname "$root")" && CDPATH="$T/decoy" HOME="$T/home34" GIT_CONFIG_GLOBAL="$T/home34/.gitconfig" bash "$(basename "$root")/install.sh" >"$T/out37" 2>&1 ); rc=$?
+[ $rc -eq 0 ] && [ "$(cd "$T/home34/.claude/skills/ai-review" && pwd -P)" = "$(cd "$root/skills/ai-review" && pwd -P)" ] && ok "CDPATH の影響を受けない" || ng "CDPATH: rc=$rc $(tail -2 "$T/out37")"
+
+echo "4z7. 置き場所に書き込めないなら、スキルにも設定にも触らずに止まる"
+if [ "$(id -u)" -eq 0 ]; then echo "  SKIP root はどこにでも書ける"; else
+rm -rf "$T/home35"; mkdir -p "$T/home35/.git-hooks"; chmod 555 "$T/home35/.git-hooks"
+HOME="$T/home35" GIT_CONFIG_GLOBAL="$T/home35/.gitconfig" bash "$INSTALL" >"$T/out38" 2>&1; rc=$?
+chmod 755 "$T/home35/.git-hooks"
+[ $rc -ne 0 ] && [ ! -e "$T/home35/.claude" ] && [ ! -e "$T/home35/.gitconfig" ] && ok "書き込めない置き場所では何も書き換えない" || ng "書き込めない置き場所: rc=$rc $(ls -a "$T/home35" | tr '\n' ' ')"
+fi
+
+echo "4z8. GIT_CONFIG が環境にあっても、読み違えずに入れる"
+rm -rf "$T/home36"; mkdir -p "$T/home36"; printf '[core]\n\thooksPath = /elsewhere\n' > "$T/home36/other.gitconfig"
+GIT_CONFIG="$T/home36/other.gitconfig" HOME="$T/home36" GIT_CONFIG_GLOBAL="$T/home36/.gitconfig" bash "$INSTALL" >"$T/out39" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -x "$T/home36/.git-hooks/pre-push" ] && ok "GIT_CONFIG を読み取りに混ぜない" || ng "GIT_CONFIG: rc=$rc $(tail -2 "$T/out39")"
+
+echo "4z9. 環境変数の上書きが相対パスなら、実行した場所に関係なく止める"
+rm -rf "$T/home37"; mkdir -p "$T/home37/.git-hooks"
+( cd "$T/home37" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=.git-hooks \
+  HOME="$T/home37" GIT_CONFIG_GLOBAL="$T/home37/.gitconfig" bash "$INSTALL" >"$T/out40" 2>&1 ); rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/home37/.claude" ] && ok "相対の上書きでは止まる" || ng "相対の上書き: rc=$rc"
 
 echo "4v3. パスの途中にリンク先の無いリンクがあれば、何も書き換えずに止まる"
 rm -rf "$T/home25"; mkdir -p "$T/home25"; ln -s "$T/home25/missing" "$T/home25/x"
