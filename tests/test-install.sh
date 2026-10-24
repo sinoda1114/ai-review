@@ -14,6 +14,9 @@ ng(){ echo "  FAIL $1"; fail=$((fail+1)); }
 unset XDG_CONFIG_HOME
 export GIT_CONFIG_NOSYSTEM=1
 inst(){ HOME="$T/home" GIT_CONFIG_GLOBAL="$T/home/.gitconfig" bash "$INSTALL" "$@" >"$T/out" 2>&1; }
+# claude・codex の CLI が無い環境（CI など）でも動くよう、偽のコマンドを PATH の先頭に置く
+mkdir -p "$T/bin"; for c in claude codex; do printf '#!/bin/sh\nexit 0\n' > "$T/bin/$c"; chmod +x "$T/bin/$c"; done
+export PATH="$T/bin:$PATH"
 mkdir -p "$T/home"
 
 echo "1. 新規の導入"
@@ -87,6 +90,36 @@ grep -q 'core.hooksPath' "$T/out6" && grep -q 'ゲートが動きません' "$T/
 echo "4h. フックに実行権が無ければ、同じ中身でも直す"
 chmod -x "$T/home/.git-hooks/pre-push"; inst
 [ -x "$T/home/.git-hooks/pre-push" ] && ok "実行権を付け直す" || ng "実行権が無いまま"
+
+echo "4i. 導入先の中に clone したリポジトリで実行しても、リポジトリ自身を退避しない"
+rm -rf "$T/home6"; mkdir -p "$T/home6/.claude/skills/ai-review"
+cp "$INSTALL" "$T/home6/.claude/skills/ai-review/"; cp -R "$root/skills" "$T/home6/.claude/skills/ai-review/"
+HOME="$T/home6" GIT_CONFIG_GLOBAL="$T/home6/.gitconfig" bash "$T/home6/.claude/skills/ai-review/install.sh" >"$T/out7" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ -f "$T/home6/.claude/skills/ai-review/install.sh" ] && grep -q '導入先の中' "$T/out7" \
+  && ok "導入先の中のリポジトリでは止まり、リポジトリを動かさない" || ng "rc=$rc $(tail -2 "$T/out7")"
+
+echo "4j. include で書いた core.hooksPath も読む"
+rm -rf "$T/home7"; mkdir -p "$T/home7/hooks"
+printf '[core]\n\thooksPath = %s\n' "$T/home7/hooks" > "$T/home7/extra.gitconfig"
+printf '[include]\n\tpath = %s\n' "$T/home7/extra.gitconfig" > "$T/home7/.gitconfig"
+HOME="$T/home7" GIT_CONFIG_GLOBAL="$T/home7/.gitconfig" bash "$INSTALL" >"$T/out8" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -x "$T/home7/hooks/pre-push" ] && ! grep -q '^\[core\]' "$T/home7/.gitconfig" \
+  && ok "include 先の core.hooksPath に置き、別の値を書き足さない" || ng "include: rc=$rc $(ls "$T/home7"/hooks 2>&1) $(cat "$T/home7/.gitconfig")"
+
+echo "4k. フックの一時ファイルの名前は予測できない"
+! grep -q 'pre-push.new.\$\$' "$INSTALL" && ok "一時ファイルを mktemp で作る" || ng "PID の一時ファイル名が残っている"
+
+echo "4l. --hook-only はフックだけを入れる（プラグインでスキルを入れた人向け）"
+rm -rf "$T/home8"; mkdir -p "$T/home8"
+HOME="$T/home8" GIT_CONFIG_GLOBAL="$T/home8/.gitconfig" bash "$INSTALL" --hook-only >"$T/out9" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -x "$T/home8/.git-hooks/pre-push" ] && [ ! -e "$T/home8/.claude/skills/ai-review" ] \
+  && ok "スキルを入れずにフックだけ入れる" || ng "--hook-only: rc=$rc $(tail -2 "$T/out9")"
+
+echo "4m. worktree の設定の core.hooksPath も知らせる"
+rm -rf "$T/repo6"; git init -q "$T/repo6"; git -C "$T/repo6" config extensions.worktreeConfig true
+git -C "$T/repo6" config --worktree core.hooksPath .husky
+( cd "$T/repo6" && HOME="$T/home" GIT_CONFIG_GLOBAL="$T/home/.gitconfig" bash "$INSTALL" >"$T/out10" 2>&1 )
+grep -q 'ゲートが動きません' "$T/out10" && ok "worktree の設定でゲートが動かないときも警告する" || ng "警告なし: $(tail -3 "$T/out10")"
 
 echo "5. 前提の確認"
 grep -q "python3" "$T/out" && grep -qi "codex" "$T/out" && ok "python3 と Codex CLI の有無を表示する" || ng "前提の表示: $(head -5 "$T/out")"

@@ -68,7 +68,7 @@ clone する場所は `~/.claude/skills/` の外にしてください（`~/.clau
 /plugin install ai-review@ai-review
 ```
 
-プラグインで入るのはスキルだけです。**pre-push フックは入らない**ので、止める仕組みが要るなら `install.sh` も実行するか、`skills/ai-review/hooks/pre-push` を自分で置いてください。
+プラグインで入るのはスキルだけです。**pre-push フックは入らない**ので、止める仕組みが要るなら、このリポジトリを clone して `./install.sh --hook-only` を実行してください（フックだけを入れます）。`--hook-only` を付けずに実行すると、スキルが `~/.claude/skills` にも入り、プラグインのものと二重に読み込まれます。
 
 ## 使い方
 
