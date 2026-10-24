@@ -43,5 +43,36 @@ echo "2. run-reviews.sh"
 n="$(grep -c 'json.dump(d, open(' "$RR")"
 [ "$n" = "0" ] && ok "escalation.json を開いたまま json.dump しない" || ng "json.dump(d, open(...)) が ${n} か所に残っている"
 
+echo "3. pre-push"
+export GIT_CONFIG_GLOBAL="$T/gitconfig"; : > "$GIT_CONFIG_GLOBAL"   # この端末のグローバルの設定に左右されない
+zero=0000000000000000000000000000000000000000
+mkrepo(){  # <dir>: コミット 1 つと、呼び継がれたら印を残す .git/hooks/pre-push を持つリポジトリ
+  G init -q -b main "$1" && (cd "$1" && echo a > a.txt && G add a.txt && G commit -qm a) || exit 2
+  printf '#!/bin/sh\nwc -l < /dev/stdin | tr -d " " > "%s/chained"\n' "$1" > "$1/.git/hooks/pre-push"; chmod +x "$1/.git/hooks/pre-push"
+}
+# 入力が空のときも呼び継ぎ、空行を渡さない
+mkrepo "$T/r1"
+(cd "$T/r1" && printf '' | bash "$HOOK" origin x >/dev/null 2>&1)
+[ "$(cat "$T/r1/chained" 2>/dev/null)" = "0" ] && ok "入力が空なら、呼び継いだフックに空行を渡さない" || ng "呼び継いだフックの入力の行数: $(cat "$T/r1/chained" 2>/dev/null)"
+# bare リポジトリでも、リポジトリ自身の pre-push を呼び継ぐ
+G init -q --bare "$T/bare.git"; printf '#!/bin/sh\necho called > "%s/bare-chained"\n' "$T" > "$T/bare.git/hooks/pre-push"; chmod +x "$T/bare.git/hooks/pre-push"
+(cd "$T/bare.git" && printf '' | bash "$HOOK" origin x >/dev/null 2>&1)
+[ -f "$T/bare-chained" ] && ok "bare リポジトリでも、リポジトリ自身の pre-push を呼び継ぐ" || ng "bare リポジトリで呼び継がなかった"
+# シグナルで止まっても、一時ファイルを残さない
+mkrepo "$T/r2"; mkdir -p "$T/tmp"
+printf '#!/bin/sh\nsleep 2\n' > "$T/r2/.git/hooks/pre-push"
+printf 'refs/heads/main %s refs/heads/main %s\n' "$(git -C "$T/r2" rev-parse HEAD)" $zero > "$T/r2.in"
+(cd "$T/r2" && AI_REVIEW_BYPASS=1 TMPDIR="$T/tmp" exec bash "$HOOK" origin x < "$T/r2.in" >/dev/null 2>&1) &   # exec: PID をフック本体にする
+hp=$!; sleep 1; kill -TERM $hp 2>/dev/null; wait $hp 2>/dev/null
+[ -z "$(ls -A "$T/tmp")" ] && ok "シグナルで止まっても、一時ファイルを残さない" || ng "一時ファイルが残った: $(ls "$T/tmp")"
+# 索引から外しても、push するコミットに .review-reports があれば信用しない
+mkrepo "$T/r3"
+(cd "$T/r3" && mkdir .review-reports && echo '{}' > .review-reports/latest.json && G add .review-reports && G commit -qm r && G rm -q --cached -r .review-reports)
+(cd "$T/r3" && printf 'refs/heads/main %s refs/heads/main %s\n' "$(git rev-parse HEAD)" $zero | bash "$HOOK" origin x > "$T/r3.out" 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q '追跡されています' "$T/r3.out" && ok "push するコミットに .review-reports があれば拒む" || ng "rc=$rc $(cat "$T/r3.out")"
+# 3 つのスクリプトも、コミットのツリーまで見る
+(cd "$T/r3" && bash "$here/resolve-item.sh" --list > "$T/r3-ri.out" 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q '追跡されています' "$T/r3-ri.out" && ok "resolve-item.sh も、コミットのツリーの .review-reports を拒む" || ng "resolve-item.sh: rc=$rc $(head -2 "$T/r3-ri.out")"
+
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]
