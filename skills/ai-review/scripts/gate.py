@@ -102,9 +102,8 @@ def _clean_cell(c):
     return _unwrap(c)
 
 
-def _repo_path(f):
-    """項目の file をリポジトリからの相対パスにする（./、隔離 worktree や本体の絶対パスを外す）。"""
-    f = _clean_cell(f or "")
+def _strip_root(f):
+    """隔離 worktree や本体の絶対パスを外す。"""
     if f.startswith("/"):
         m = re.match(r"^.*?/ai-review-wt\.[^/]+/(.*)$", f)
         if m:
@@ -114,6 +113,27 @@ def _repo_path(f):
             if f.startswith(root):
                 f = f[len(root):]
     return f
+
+
+def _repo_path(f):
+    """項目の file をリポジトリからの相対パスにする（./、隔離 worktree や本体の絶対パスを外す）。"""
+    return _strip_root(_clean_cell(f or ""))
+
+
+def _in_diff(f, changed, head):
+    """項目の file が、差分の一覧（git が出した生のパスの集合）にあるか。
+    まず整形しない形（絶対パスと ./ だけ外す）で比べる。整形（空白・:行番号・装飾を外す）で初めて一致したときは、
+    整形前の名前が HEAD に実在しないとき（レビュアーの書き方の揺れ）だけ一致にする。実在すれば項目はそのファイルを
+    指しているので、`n8.js:12` の fixed を `n8.js` の変更で再レビュー済みにしない（ai-review#5 の 8）"""
+    f = f or ""
+    raw = re.sub(r"^\./", "", _strip_root(f))
+    if raw in changed:
+        return True
+    clean = _repo_path(f)
+    if clean == raw or clean not in changed:
+        return False
+    import subprocess
+    return subprocess.run(["git", "cat-file", "-e", "%s:%s" % (head, raw)], capture_output=True).returncode != 0
 
 
 def _table_lines(text):
@@ -749,9 +769,11 @@ def cmd_record(a):
     if incremental and a.run:
         # 削除・名前変更の旧パスも含む一覧（changed-files-all.nul。NUL 区切り）を使う。判定表用の changed-files.txt は
         # 削除を除き、改行区切りなので使わない。git が出したパスはそのまま比べる（strip や _repo_path の整形をすると、
-        # 改行・末尾の空白・:行番号 を含む名前のファイルで別のパスを「差分にある」と見せかけられる。ai-review#5 の 8）
+        # 改行・末尾の空白・:行番号 を含む名前のファイルで別のパスを「差分にある」と見せかけられる。ai-review#5 の 8）。
+        # newline="" で読む（既定の改行変換は CR を LF に変え、CR と LF だけが違う別のパスを一致させる）
         try:
-            with open(os.path.join(a.run, "changed-files-all.nul"), encoding="utf-8", errors="surrogateescape") as f:
+            with open(os.path.join(a.run, "changed-files-all.nul"), encoding="utf-8", errors="surrogateescape",
+                      newline="") as f:
                 changed = {p for p in f.read().split("\0") if p}
         except OSError:
             pass  # 一覧が無ければ、差分にあると確かめられないので fixed は open に戻る
@@ -760,7 +782,7 @@ def cmd_record(a):
             if not isinstance(it, dict):
                 continue
             if (it.get("status") == "fixed" and not it.get("re_reviewed_sha") and incremental
-                    and _repo_path(it.get("file")) not in changed):
+                    and not _in_diff(it.get("file"), changed, a.head)):
                 # 差分レビューは差分の中しか見ないので、差分にそのファイルが無い fixed は確かめられていない。
                 # 再レビュー済みにせず、open に戻して引き継ぐ（偽の fixed で BLOCK・高リスクを抜けさせない）
                 c = dict(it, status="open")
