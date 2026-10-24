@@ -532,6 +532,27 @@ def read_json(path):
     return d if isinstance(d, dict) else {}
 
 
+def carried_over(it):
+    """前回の記録の項目が、次の周の記録に持ち越されるか（再レビュー済みの fixed だけは持ち越さない）。
+    cmd_record の引き継ぎと carries_block の両方がこれを使う（片方だけ変えると block が消える穴が戻る）"""
+    return not (it.get("status") == "fixed" and it.get("re_reviewed_sha"))
+
+
+def carries_block(prev):
+    """前回の記録に、次の周へ BLOCK を持ち越す項目があるか。
+    未再レビューの fixed の BLOCK も True にする。heavy_fixed（tier == BLOCK）が拾って次の周は全体レビューに
+    なるので block は消えない（heavy_fixed の条件を緩めるときは、ここも見直す）"""
+    return any(isinstance(it, dict) and it.get("tier") == "BLOCK" and carried_over(it)
+               for it in prev.get("must_address") or [])
+
+
+def block_not_carried(prev):
+    """結論が block なのに、次の周へ BLOCK を持ち越す項目が無い記録か。差分レビューが引き継ぐのは項目だけなので、
+    この記録の次を差分レビューにすると block が消え、差分で何も出なければ pass になる（ai-review#5 の 9）。
+    チェーンは切らずに（深掘りの義務 chain_escalated や full_count を残すため）、次の周を全体にする"""
+    return prev.get("verdict") == "block" and not carries_block(prev)
+
+
 def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
     """前回の記録が、今回のレビューと同じチェーン（同じブランチ・同じ起点・HEAD の祖先）にあるか"""
     return bool(
@@ -607,6 +628,8 @@ def cmd_plan(a):
         # 差分レビューは「そのファイルが差分にあるか」までしか確かめられない。重い項目と、一度 open に戻した項目の
         # fixed は全体で確かめる（戻した項目は、差分レビューを続ける限り確かめられない）
         out["why"] = "BLOCK・高リスク・セキュリティ、または差分に入らなかった項目を fixed にしたので、全体で確かめる"
+    elif block_not_carried(prev):
+        out["why"] = "前回の結論は block だが、引き継げる BLOCK の項目が無い（差分レビューでは block を引き継げない）ので、全体を見る"
     elif large and prev.get("chain_size_escalated") is not True:
         # 規模による深掘りがまだのブランチは、深掘りが全体を見るように、この周を全体にする
         out["why"] = "ブランチ全体が規模の上限を超えたが、まだ規模による深掘りをしていないので、全体を深掘りする"
@@ -706,6 +729,9 @@ def cmd_record(a):
             die("前回の記録に、差分レビューでは確かめきれない fixed（%s）があります。"
                 "run-reviews.sh --full で全体をレビューしてから記録してください"
                 % ", ".join(str(it.get("id")) for it in heavy_fixed(prev, path_rules(a.rules or [])))[:200])
+        if scope["scope"] == "incremental" and block_not_carried(prev):
+            die("前回の記録の結論は block ですが、引き継げる BLOCK の項目がありません（差分レビューでは block を"
+                "引き継げません）。run-reviews.sh --full で全体をレビューしてから記録してください")
         if size_skipped and not chained:
             die("規模による昇格を飛ばした run ですが、前回の記録とつながりません（規模の判定は 1 周目に要る）")
         if (scope["scope"] == "full" and chained and prev.get("chain_escalated") is True
@@ -814,7 +840,7 @@ def cmd_record(a):
                 c["re_reviewed_sha"] = a.head
                 c["previous_head_sha"] = prev.get("head_sha")
                 prev_fixed.append(c)
-            elif incremental and not (it.get("status") == "fixed" and it.get("re_reviewed_sha")):
+            elif incremental and carried_over(it):
                 # 差分レビューは前回より前のコードを見直さないので、同じ指摘は出直さない。
                 # 片づいていない項目（と、片づいた accepted）を引き継いで落とさない
                 c = dict(it)
