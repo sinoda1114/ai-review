@@ -395,6 +395,12 @@ cp "$INSTALL" "$inner2/"; cp -R "$root/skills" "$inner2/"
 HOME="$T/home47" GIT_CONFIG_GLOBAL="$T/home47/.gitconfig" bash "$inner2/install.sh" --hook-only >"$T/out50" 2>&1; rc=$?
 [ $rc -eq 0 ] && ! grep -q '要らなければ消して' "$T/out50" && ok "フックが使う clone は消すよう勧めない" || ng "clone を消すよう勧めた rc=$rc"
 
+echo "4n3. 普通に入れた後に --hook-only を実行すると、スキルが 2 つ読み込まれることを知らせる"
+rm -rf "$T/home48"; mkdir -p "$T/home48"
+HOME="$T/home48" GIT_CONFIG_GLOBAL="$T/home48/.gitconfig" bash "$INSTALL" >/dev/null 2>&1
+HOME="$T/home48" GIT_CONFIG_GLOBAL="$T/home48/.gitconfig" bash "$INSTALL" --hook-only >"$T/out51" 2>&1; rc=$?
+[ $rc -eq 0 ] && grep -q '要らなければ消して' "$T/out51" && ok "リンクで入れたスキルが残っていれば知らせる" || ng "二重読み込みの注意なし rc=$rc"
+
 echo "4o. claude が無ければ何も書き換えずに止まる"
 mkdir -p "$T/bin-noclaude"; for c in git python3 dirname date sed mktemp; do p="$(command -v "$c")" && ln -sf "$p" "$T/bin-noclaude/$c"; done
 rm -rf "$T/home11"; mkdir -p "$T/home11"

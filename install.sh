@@ -278,7 +278,8 @@ if [ $hook_only -eq 1 ]; then
   echo "  入れません（--hook-only）。フックの案内文には ${src} の場所を書きます"
   inside_dst=0
   if real_dst="$(cd "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ]; then
-    case "$src/" in "$real_dst"/*) inside_dst=1 ;; esac
+    # 導入先の実体がこのスキルそのもの（リンクで入れた後）なら、2 つ読み込まれるので知らせる
+    if [ "$real_dst" != "$src" ]; then case "$src/" in "$real_dst"/*) inside_dst=1 ;; esac; fi
   fi
   if { [ -e "$dst" ] || [ -L "$dst" ]; } && [ $inside_dst -eq 0 ]; then
     echo "  注意: ${dst} も残っています。プラグインと両方あるとスキルが 2 つ読み込まれるので、要らなければ消してください" >&2
