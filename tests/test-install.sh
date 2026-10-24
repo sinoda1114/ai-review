@@ -296,6 +296,16 @@ echo "4z5. リンク先の無いリンクの pre-push も、--force なしでは
 rm -rf "$T/home33"; mkdir -p "$T/home33/.git-hooks"; ln -s "$T/home33/mine" "$T/home33/.git-hooks/pre-push"
 HOME="$T/home33" GIT_CONFIG_GLOBAL="$T/home33/.gitconfig" bash "$INSTALL" >"$T/out36" 2>&1; rc=$?
 [ $rc -ne 0 ] && [ -L "$T/home33/.git-hooks/pre-push" ] && ok "壊れたリンクのフックも別のフックとして扱う" || ng "壊れたリンクを置き換えた rc=$rc"
+grep -q '^grep:' "$T/out36" && ng "壊れたリンクの pre-push で grep のエラーが出る" || ok "壊れたリンクの pre-push でも grep のエラーを出さない"
+HOME="$T/home33" GIT_CONFIG_GLOBAL="$T/home33/.gitconfig" bash "$INSTALL" --force >"$T/out36" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -L "$(ls -d "$T/home33/.git-hooks/pre-push.bak."* | head -1)" ] && [ ! -L "$T/home33/.git-hooks/pre-push" ] && ok "--force なら壊れたリンクをリンクのまま退避する" || ng "--force の退避: rc=$rc $(ls -la "$T/home33/.git-hooks")"
+
+echo "4z5b. リンクの pre-push は、中身が同じでもリンクのまま退避してから置き直す"
+rm -rf "$T/home41"; mkdir -p "$T/home41/.git-hooks"; inst_hook="$T/home/.git-hooks/pre-push"
+sed "s|__AI_REVIEW_SKILL_DIR__|$T/home41/.claude/skills/ai-review|" "$root/skills/ai-review/hooks/pre-push" > "$T/home41/mine"; chmod +x "$T/home41/mine"
+ln -s "$T/home41/mine" "$T/home41/.git-hooks/pre-push"
+HOME="$T/home41" GIT_CONFIG_GLOBAL="$T/home41/.gitconfig" bash "$INSTALL" >"$T/out44" 2>&1; rc=$?
+[ $rc -eq 0 ] && ls "$T/home41/.git-hooks" | grep -q '^pre-push\.bak\.' && ok "リンクは退避して残す" || ng "リンクの退避: rc=$rc $(ls -la "$T/home41/.git-hooks")"
 
 echo "4z6. CDPATH に同じ名前の場所があっても、相対パスで呼んだ install.sh は自分の場所を使う"
 rm -rf "$T/decoy" "$T/home34"; mkdir -p "$T/decoy/$(basename "$root")/skills/ai-review" "$T/home34"; echo decoy > "$T/decoy/$(basename "$root")/skills/ai-review/SKILL.md"
@@ -328,7 +338,17 @@ HOME="$T/home38" GIT_CONFIG_GLOBAL="$T/home38/.gitconfig" bash "$INSTALL" >"$T/o
 rm -rf "$T/home39"; mkdir -p "$T/home39"; printf '[core\n\tbroken\n' > "$T/home39/.gitconfig"
 HOME="$T/home39" GIT_CONFIG_GLOBAL="$T/home39/.gitconfig" bash "$INSTALL" >"$T/out42" 2>&1; rc=$?
 [ $rc -ne 0 ] && [ ! -e "$T/home39/.claude" ] && grep -q '読めません' "$T/out42" && ok "壊れたグローバル設定では何も書き換えない" || ng "壊れた設定: rc=$rc $(tail -2 "$T/out42")"
-grep -q '^grep:' "$T/out36" && ng "壊れたリンクの pre-push で grep のエラーが出る" || ok "壊れたリンクの pre-push でも grep のエラーを出さない"
+
+echo "4z10b. 設定ファイルが書き込めない場所へのリンクなら、書き換える前に止まる"
+if [ "$(id -u)" -eq 0 ]; then echo "  SKIP root はどこにでも書ける"; else
+rm -rf "$T/home42"; mkdir -p "$T/home42/ro"; : > "$T/home42/ro/config"; chmod 555 "$T/home42/ro"; ln -s "$T/home42/ro/config" "$T/home42/.gitconfig"
+HOME="$T/home42" GIT_CONFIG_GLOBAL="$T/home42/.gitconfig" bash "$INSTALL" >"$T/out45" 2>&1; rc=$?
+chmod 755 "$T/home42/ro"
+[ $rc -ne 0 ] && [ ! -e "$T/home42/.claude" ] && ok "リンク先の場所で書き込めるかを確かめる" || ng "リンクの設定ファイル: rc=$rc $(tail -2 "$T/out45")"
+fi
+rm -rf "$T/home43"; mkdir -p "$T/home43"
+GIT_CONFIG_GLOBAL= HOME="$T/home43" bash "$INSTALL" >"$T/out46" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/home43/.claude" ] && grep -q 'GIT_CONFIG_GLOBAL' "$T/out46" && ok "空の GIT_CONFIG_GLOBAL では止まる" || ng "空の GIT_CONFIG_GLOBAL: rc=$rc"
 
 echo "4z11. --copy で入れたスキルは、umask 002 でもグループに書き込ませない"
 rm -rf "$T/home40"; mkdir -p "$T/home40"

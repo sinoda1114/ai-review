@@ -53,6 +53,10 @@ case "$HOME" in
   /*) ;;
   *) echo "HOME が絶対パスではありません（${HOME}）。絶対パスにしてから実行してください。" >&2; exit 1 ;;
 esac
+# git は空の GIT_CONFIG_GLOBAL を「未設定」とはみなさず、空のパスに書こうとして失敗する
+if [ "${GIT_CONFIG_GLOBAL+set}" = set ] && [ -z "$GIT_CONFIG_GLOBAL" ]; then
+  echo "GIT_CONFIG_GLOBAL が空で設定されています。外すか、絶対パスにしてから実行してください。" >&2; exit 1
+fi
 # git はこれらを実行した場所から解決するので、相対だと、読む設定と書く設定が別のファイルになる
 for v in GIT_CONFIG_GLOBAL XDG_CONFIG_HOME; do
   case "${!v:-/}" in   # 空は未設定と同じ扱い
@@ -175,6 +179,12 @@ if [ -z "$hooks" ]; then
   gcfg="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
   xdg_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/git/config"
   if [ -z "${GIT_CONFIG_GLOBAL:-}" ] && [ ! -e "$gcfg" ] && [ -e "$xdg_cfg" ]; then gcfg="$xdg_cfg"; fi
+  # git はリンクをたどり、リンク先の隣に .lock を作って置き換えるので、リンク先の場所で確かめる
+  hops=0
+  while [ -L "$gcfg" ] && [ $hops -lt 40 ]; do
+    t="$(readlink "$gcfg")"; hops=$((hops + 1))
+    case "$t" in /*) gcfg="$t" ;; *) gcfg="$(dirname "$gcfg")/$t" ;; esac
+  done
   if [ -e "$gcfg.lock" ] || { [ -e "$gcfg" ] && [ ! -r "$gcfg" ]; } || [ ! -w "$(dirname "$gcfg")" ]; then
     echo "グローバルの git の設定（${gcfg}）に書き込めません（${gcfg}.lock が残っているか、権限が足りません）。直してから実行してください。" >&2
     exit 1
@@ -231,6 +241,8 @@ if { [ -e "$hooks/pre-push" ] || [ -L "$hooks/pre-push" ]; } && ! cmp -s "$new" 
     exit 1
   fi
   replace_hook=1
+elif [ -L "$hooks/pre-push" ]; then
+  replace_hook=1   # 中身が同じでもリンクは普通のファイルで置き直すので、リンクのまま退避して残す
 fi
 
 # 置き場所を先に作り、作った後の持ち主と権限を確かめる（止まるときに、スキルや設定を書き換えずに済むように）
