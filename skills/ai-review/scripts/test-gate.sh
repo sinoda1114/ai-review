@@ -973,6 +973,47 @@ echo 1 > o93.js; G add o93.js; G commit -qm small
 AI_REVIEW_DRY_ESCALATION=real run --out .review-reports/cc3a
 bash "$RG" --verdict pass --escalate false --escalation-done false --skipped-by-user true --reason r --report .review-reports/cc3a/report.md >/dev/null 2>&1
 [ "$(jget chain_size_escalated)" = "false" ] && ok "昇格が求められていない記録の --skipped-by-user では、規模の深掘りを済んだ扱いにしない（CC3）" || ng "CC3: chain_size_escalated=$(jget chain_size_escalated)"
+# DD1: 引き継げる BLOCK の項目が無い block の記録とは、チェーンをつながない（ai-review#5 の 9）。
+# 差分レビューが引き継ぐのは項目だけなので、つなぐと block が消え、差分で何も出なければ pass で push できてしまう
+printf 'max_files 1\n' > .ai-review/escalation-rules.local.txt
+G checkout -q -b d91 origin/main
+echo 1 > d91.js; echo 2 > d92.js; G add d91.js d92.js; G commit -qm big
+run --out .review-reports/dd1a; rec13 .review-reports/dd1a --verdict pass
+echo 3 >> d91.js; G commit -qam dd1b
+run --out .review-reports/dd1b; rec13 .review-reports/dd1b --verdict pass
+run --out .review-reports/dd1c; rec13 .review-reports/dd1c --verdict block
+[ "$(jget verdict)" = "block" ] && [ "$(jget full_count)" = "2" ] || ng "DD1 の準備: verdict=$(jget verdict) full_count=$(jget full_count) $(cat "$T/rg.out")"
+hd1c="$(git rev-parse HEAD)"; cp "$latest" "$T/dd1c.json"
+echo 4 >> d91.js; G commit -qam dd1d
+run --out .review-reports/dd1d
+[ "$(sget .review-reports/dd1d/scope.json scope)" = "full" ] && ok "BLOCK の項目が無い block の記録の次は全体レビュー（DD1）" || ng "DD1: $(cat .review-reports/dd1d/scope.json)"
+printf '{"scope": "incremental", "since": "%s"}' "$hd1c" > .review-reports/dd1d/scope.json
+if rec13 .review-reports/dd1d --verdict pass; then
+  hook && ng "BLOCK の項目が無い block の記録につないだ差分レビューが pass になり、push を通した（DD1）" || ng "BLOCK の項目が無い block の記録につないで差分レビューを記録できた（DD1）"
+else
+  ok "BLOCK の項目が無い block の記録につなぐ差分レビューは記録しない（DD1）"
+fi
+# 再レビュー済みの fixed（引き継がれない）しか BLOCK の項目が無い block の記録も同じ
+cp "$T/dd1c.json" "$latest"
+python3 - "$latest" "$hd1c" <<'PY'
+import json,sys; p=sys.argv[1]; d=json.load(open(p))
+d["must_address"] = [{"id": "prev-B0", "source": "own-review", "file": "d91.js", "line": 1, "tier": "BLOCK", "severity": "High",
+                      "summary": "x", "high_risk": False, "category": "correctness", "status": "fixed", "re_reviewed_sha": sys.argv[2]}]
+json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
+PY
+run --out .review-reports/dd1e
+[ "$(sget .review-reports/dd1e/scope.json scope)" = "full" ] && ok "BLOCK の項目が再レビュー済みの fixed だけの block の記録の次も全体レビュー（DD1）" || ng "DD1（再レビュー済み）: $(cat .review-reports/dd1e/scope.json)"
+# 引き継げる BLOCK の項目がある block の記録とは、これまでどおりつなぎ、block を項目ごと引き継ぐ
+G checkout -q -b d92 origin/main
+echo 1 > d93.js; echo 2 > d94.js; G add d93.js d94.js; G commit -qm big
+run --out .review-reports/dd2a
+itb="$(items '[{"id":"B1","source":"own-review","file":"d93.js","line":1,"tier":"BLOCK","severity":"High","summary":"入力を検査していない","high_risk":false,"category":"correctness"}]')"
+rec13 .review-reports/dd2a --verdict block --items "$itb" || ng "DD1 の準備（BLOCK の項目あり）: $(cat "$T/rg.out")"
+echo 3 >> d94.js; G commit -qam dd2b
+run --out .review-reports/dd2b
+rec13 .review-reports/dd2b --verdict pass
+[ "$(sget .review-reports/dd2b/scope.json scope)" = "incremental" ] && [ "$(jget verdict)" = "block" ] && jget must_address | grep -q '"carry-B1"' \
+  && ok "未処理の BLOCK の項目がある block の記録には差分レビューでつなぎ、block を引き継ぐ（DD1）" || ng "DD1（BLOCK の項目あり）: $(cat .review-reports/dd2b/scope.json) verdict=$(jget verdict) $(cat "$T/rg.out")"
 rm -rf .ai-review
 
 echo "13c. Codex の混み合い（at capacity）は、待ってから 1 回だけ回し直す"

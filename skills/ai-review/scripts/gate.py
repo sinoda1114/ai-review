@@ -498,6 +498,13 @@ def read_json(path):
     return d if isinstance(d, dict) else {}
 
 
+def carries_block(prev):
+    """前回の記録に、次の周へ BLOCK を持ち越す項目があるか（再レビュー済みの fixed は引き継がれないので数えない）"""
+    return any(isinstance(it, dict) and it.get("tier") == "BLOCK"
+               and not (it.get("status") == "fixed" and it.get("re_reviewed_sha"))
+               for it in prev.get("must_address") or [])
+
+
 def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
     """前回の記録が、今回のレビューと同じチェーン（同じブランチ・同じ起点・HEAD の祖先）にあるか"""
     return bool(
@@ -513,6 +520,9 @@ def chain_continues(prev, branch, merge_base, prev_ancestor, dry=False):
         # 深掘りを求められたのに済ませていない記録とはつながない（つなぐと、次の差分の記録で深掘りの義務が消える）
         and not (prev.get("escalate") is True and prev.get("escalation_done") is not True
                  and prev.get("skipped_by_user") is not True)
+        # 引き継げる BLOCK の項目が無い block の記録とはつながない（差分レビューが引き継ぐのは項目だけなので、
+        # つなぐと block が消え、差分で何も出なければ pass になる。ai-review#5 の 9）
+        and not (prev.get("verdict") == "block" and not carries_block(prev))
         and isinstance(prev.get("head_sha"), str)
         and bool(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", prev["head_sha"]))
         and prev_ancestor
