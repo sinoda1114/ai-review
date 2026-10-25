@@ -31,11 +31,21 @@ warn_old_hook() {
     if [ -f "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; then old="$hk"; break; fi
   done
   [ -n "$old" ] || return 0
-  local how="install.sh を実行し直してください"
-  [ "$old" = "$hp/pre-push" ] && [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] || how="${old} を消すか、スキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
-  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。入れ直すまでゲートは効いていません（記録が無ければ push は止まりますが、作業ツリーに記録が置かれると通ります）。${how}" >&2
+  if [ "$old" = "$hp/pre-push" ]; then
+    local how="install.sh を実行し直してください"
+    [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] || how="${old} をスキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
+    echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。入れ直すまでゲートは効いていません（記録が無ければ push は止まりますが、作業ツリーに記録が置かれると通ります）。${how}" >&2
+  else
+    # 効いているフックは新しい版で、通した後に呼び継ぐ先だけが古い版。古いフックは古い場所の記録が無いので、いつも止める
+    echo "注意: 呼び継ぐ先の pre-push フック（${old}）が古い版で、記録を作業ツリーの .review-reports から読むので、push をいつも止めます。${old} を消すか、スキルの hooks/pre-push で置き換えてください" >&2
+  fi
+  # .review-reports がリンクなら、リンク先のファイルを消さない（呼び出し元の検査に頼らない）
+  [ -L "$top/.review-reports" ] && return 0
   # 古い場所に残った記録（偽の記録かもしれない）を、古いフックに信用させない
   rm -f "$top/.review-reports/latest.json" 2>/dev/null
+  if [ -e "$top/.review-reports/latest.json" ] || [ -L "$top/.review-reports/latest.json" ]; then
+    echo "注意: 古い場所の記録（$top/.review-reports/latest.json）を消せませんでした。古いフックはこれを信用するので、手で消してください" >&2
+  fi
   return 0
 }
 
