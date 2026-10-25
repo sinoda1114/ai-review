@@ -169,5 +169,23 @@ rm -rf "$T/r12/.review-reports/latest.json"
 grep -q '# ai-review-record: git-dir' "$HOOK" && ok "フックに版の目印がある" || ng "フックに版の目印が無い"
 ! grep -q 'tmp="\$f.tmp.\$\$"' "$here/resolve-item.sh" && ok "resolve-item.sh の一時ファイルは mktemp で作る" || ng "予測できる一時ファイル名が残っている"
 
+echo "13. UTF-8 のロケールで、全角文字の直前の変数を変数名の一部として読まない"
+# bash は UTF-8 のロケールで `$f（` の全角文字のバイトまで変数名として読み、set -u の下で落ちる
+bad="$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~]' "$here"/*.sh "$HOOK" | grep -vE ':[0-9]+:[[:space:]]*#')"
+[ -z "$bad" ] && ok "スクリプトに、全角文字の直前の裸の \$変数が無い" || ng "全角文字の直前の裸の \$変数: $bad"
+# 入っている UTF-8 のロケールを使う（入っていない名前を渡すと bash は警告して続け、検査が素通りになるため）
+u8=""
+for l in ja_JP.UTF-8 en_US.UTF-8 C.UTF-8 C.utf8 en_US.utf8; do
+  locale -a 2>/dev/null | grep -qixF "$l" && { u8="$l"; break; }
+done
+if [ -z "$u8" ]; then
+  echo "  SKIP UTF-8 のロケールが入っていないため、resolve-item.sh の実行の検査を飛ばす（静的検査は上で実施）"
+else
+  mkdir -p "$T/r13" && G -C "$T/r13" init -q && G -C "$T/r13" commit -q --allow-empty -m init
+  out="$(cd "$T/r13" && LC_ALL="$u8" bash "$here/resolve-item.sh" --id R1 --fixed --note x 2>&1)"
+  printf '%s' "$out" | grep -q '記録（.*）がありません' && ! printf '%s' "$out" | grep -qE '未割り当て|unbound' \
+    && ok "記録が無いとき、resolve-item.sh は UTF-8 のロケール（${u8}）でも理由を出して止まる" || ng "resolve-item.sh（${u8}）: $out"
+fi
+
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]

@@ -49,7 +49,7 @@ guard_reports_dir() {
 }
 guard_reports_dir "$(pwd)"
 f="$(record_file)" || { echo "git のディレクトリを確かめられません" >&2; exit 1; }
-[ -f "$f" ] || { echo "記録（$f）がありません。先に /ai-review を実行してください" >&2; exit 1; }
+[ -f "$f" ] || { echo "記録（${f}）がありません。先に /ai-review を実行してください" >&2; exit 1; }
 
 if [ $list -eq 1 ]; then
   exec "$py" -I "$here/gate.py" resolve --latest "$f" --list
