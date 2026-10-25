@@ -22,7 +22,7 @@ record_file() {
 abs_git_path() {
   local d="$1" p; shift
   p="$(git -C "$d" rev-parse "$@" 2>/dev/null)" && [ -n "$p" ] || return 1
-  case "$p" in /*) ;; *) p="$(cd "$d" 2>/dev/null && pwd)/$p" ;; esac
+  case "$p" in /*) ;; *) p="$(CDPATH='' cd -- "$d" 2>/dev/null && pwd)/$p" || return 1 ;; esac
   printf '%s\n' "$p"
 }
 
@@ -30,14 +30,20 @@ abs_git_path() {
 #   展開させ、相対パスは作業ツリーのルートから解く）か、無ければ共通の git のディレクトリの hooks
 hooks_dir() {
   local d="${1:-.}" hp top
-  hp="$(git -C "$d" config --type=path --includes --get core.hooksPath 2>/dev/null)"
+  local rc
+  hp="$(git -C "$d" config --type=path --includes --get core.hooksPath 2>/dev/null)"; rc=$?
+  # --type=path は git 2.18 より前に無い。キーが無い（1）以外の失敗は、--path で読み直す
+  if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then
+    hp="$(git -C "$d" config --path --includes --get core.hooksPath 2>/dev/null)"; rc=$?
+    [ $rc -eq 0 ] || [ $rc -eq 1 ] || return 1   # 設定を読めない
+  fi
   if [ -z "$hp" ]; then
     hp="$(abs_git_path "$d" --git-common-dir)" || return 1
     printf '%s/hooks\n' "$hp"; return 0
   fi
   case "$hp" in
     /*) ;;
-    *) top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null)" || top="$(cd "$d" && pwd)"; hp="$top/$hp" ;;
+    *) top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null)" || top="$(CDPATH='' cd -- "$d" 2>/dev/null && pwd)" || return 1; hp="$top/$hp" ;;
   esac
   printf '%s\n' "$hp"
 }
@@ -67,7 +73,8 @@ warn_old_hook() {
   return 0
 }
 
-# reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）
+# reports_unreadable <リポジトリのルート> <コミット>: 指す先はあるのにコミットを読めない、または ref が壊れていれば 0
+#   （読めないものは信用しない）。ツリーを読めるかは、呼び出し元がツリーを 1 回だけ読むときに見る
 reports_unreadable() {
   if ! git -C "$1" rev-parse -q --verify "$2" >/dev/null 2>&1; then
     # 「まだ無い」と見なすのは、生まれる前のブランチ（HEAD が指す ref のファイルが無い）だけ。ref のファイルが
@@ -79,7 +86,8 @@ reports_unreadable() {
   fi
   ! git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1   # 指す先はあるのに、コミットを読めない
 }
-# reports_untrusted が 0 を返したときの理由: link（シンボリックリンク）・tracked（追跡されている）・unreadable（読めない）
+# reports_untrusted が 0 を返したときの理由: link（シンボリックリンク）・tracked（追跡されている）・
+#   index（索引を読めない）・unreadable（コミットやツリーを読めない）
 REPORTS_WHY=""
 # reports_untrusted_message: 理由に合った文言を標準エラーに出す
 reports_untrusted_message() {
@@ -111,6 +119,7 @@ reports_untrusted() {
   [ $# -gt 0 ] || set -- HEAD
   for c in "$@"; do
     reports_unreadable "$top" "$c" && { REPORTS_WHY=unreadable; return 0; }
+    git -C "$top" rev-parse -q --verify "$c^{commit}" >/dev/null 2>&1 || continue   # 生まれる前のブランチ（読むツリーが無い）
     # ツリーは 1 回だけ読む。読めなければ（git が失敗したら）信用しない
     n="$(git -C "$top" ls-tree -r -z --name-only "$c" 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat"; echo " ${PIPESTATUS[0]}")"
     [ "${n##* }" = "0" ] || { REPORTS_WHY=unreadable; return 0; }

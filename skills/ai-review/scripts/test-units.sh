@@ -275,5 +275,15 @@ mkdir -p "$T/r14p/.review-reports"; rec_json "$(git -C "$T/r14p" rev-parse HEAD)
 (cd "$T/r14p" && bash "$T/r14phooks/pre-push" origin x < /dev/null); hrc=$?
 [ $rc -eq 0 ] && grep -q '正しく働きません' "$T/r14p.out" && [ ! -e "$T/r14p/.review-reports/latest.json" ] && [ -f "$(git -C "$T/r14p" rev-parse --absolute-git-dir)/ai-review/latest.json" ] && [ $hrc -ne 0 ] \
   && ok "record-gate.sh は古いフックを知らせ、偽の記録を消し、古いフックのままでは push が止まる" || ng "通し: rc=$rc hook=$hrc $(tail -3 "$T/r14p.out")"
+# 初回コミットの前（生まれる前のブランチ）は、ツリーを読めないとは扱わない（--local のレビューを止めない）
+mkdir -p "$T/r14q" && git -C "$T/r14q" init -q -b main
+( . "$here/reports-guard.sh"; ! reports_untrusted "$T/r14q" HEAD ) && ok "初回コミットの前のリポジトリは信用する（ツリーを読めないと扱わない）" || ng "初回コミットの前を止めた: $( . "$here/reports-guard.sh"; reports_untrusted "$T/r14q" HEAD; echo "$REPORTS_WHY")"
+# --type=path の無い古い git（2.18 より前）でも、core.hooksPath を読む
+mkdir -p "$T/oldgit2"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --type*) echo "error: unknown option $a" >&2; exit 129 ;; esac; done\nexec "%s" "$@"\n' "$realgit" > "$T/oldgit2/git"; chmod +x "$T/oldgit2/git"
+mkrepo "$T/r14r"; git -C "$T/r14r" config core.hooksPath "$T/r14rhooks"
+( cd "$T/r14r" && PATH="$T/oldgit2:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "$T/r14rhooks" ] ) && ok "--type=path が無い git でも core.hooksPath を読む" || ng "古い git の hooks_dir: $(cd "$T/r14r" && PATH="$T/oldgit2:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
+# pre-push は作業ツリーのルートに移れなければ止める
+! grep -q 'cd "$repo_root" || exit 0' "$HOOK" && ok "pre-push はルートに移れなければ止める" || ng "pre-push がルートに移れないときに通す"
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]

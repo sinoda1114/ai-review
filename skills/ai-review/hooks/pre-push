@@ -55,7 +55,7 @@ if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   echo "[ai-review] 拒否: 作業ツリーの場所が分からないので、記録を確かめられません（作業ツリーの中から push してください）" >&2
   exit 1
 fi
-cd "$repo_root" || exit 0
+cd "$repo_root" || { echo "[ai-review] 拒否: 作業ツリーのルート（${repo_root}）に移れません" >&2; exit 1; }
 
 # push 対象の sha を全て集める。削除（全ゼロ）は対象外。
 # 現在の HEAD と比較するだけでは `git push origin other-branch` や
