@@ -174,7 +174,8 @@ if [ "$mode" != "local" ] && [ $base_given -eq 0 ] && [ -n "$base" ]; then
     [ $force_full -eq 1 ] && plan_args+=(--full)
     [ "${force_incr:-0}" -eq 1 ] && plan_args+=(--incremental)
     [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ] && plan_args+=(--dry)
-    st="$(mktemp "$out/scope.json.tmp.XXXXXX" 2>/dev/null)" || st=""   # 名前を予測できない一時ファイル
+    rm -f "$out"/scope.json.tmp.* 2>/dev/null   # 前に中断した実行の残り
+    st="$(mktemp "$out/scope.json.tmp.XXXXXX" 2>/dev/null)" || { st=""; echo "WARN: $out に一時ファイルを作れない（範囲を決めずに全体レビューにする）" >> "$status"; }   # 名前を予測できない一時ファイル
     if [ -n "$st" ] && [ -n "$plan_mb" ] && "$py" -I "$gate_py" "${plan_args[@]}" > "$st" 2>> "$status"; then
       mv "$st" "$out/scope.json"
     else
@@ -372,12 +373,12 @@ if [ $security -eq 0 ] || [ ! -s "$out/escalation.json" ]; then
     esc_args=(); [ "$mode" = "local" ] && esc_args+=(--local); [ "$mode" != "local" ] && [ -n "$base" ] && esc_args+=(--base "$base")
     [ "${no_size:-0}" = "1" ] && esc_args+=(--no-size)
     # 一時ファイルに書き、成功したときだけ置く（失敗で空のファイルを残さない）
-    et="$(mktemp "$out/escalation.json.tmp.XXXXXX" 2>/dev/null)" || et=""   # 名前を予測できない一時ファイル
+    rm -f "$out"/escalation.json.tmp.* 2>/dev/null   # 前に中断した実行の残り
+    et="$(mktemp "$out/escalation.json.tmp.XXXXXX" 2>/dev/null)" || { et=""; echo "WARN: $out に一時ファイルを作れない（escalation-check.sh を動かしていない）" >> "$status"; }   # 名前を予測できない一時ファイル
     if [ -n "$et" ] && ( cd "$repo_top" && "$script_dir/escalation-check.sh" ${esc_args[@]+"${esc_args[@]}"} ) > "$et" 2>> "$status"; then
       mv "$et" "$out/escalation.json"
     else
-      [ -z "$et" ] || rm -f "$et"
-      echo "WARN: escalation-check.sh が失敗した（record は escalation.json を読めないと拒む）" >> "$status"
+      [ -z "$et" ] || { rm -f "$et"; echo "WARN: escalation-check.sh が失敗した（record は escalation.json を読めないと拒む）" >> "$status"; }
     fi
   fi
 fi

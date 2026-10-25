@@ -306,5 +306,14 @@ printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) echo "C:/Users/u/.git-
 ( cd "$T/r16a" && PATH="$T/wingit2:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "C:/Users/u/.git-hooks" ] ) && ok "hooks_dir も C:/ 形式を絶対パスとして扱う" || ng "hooks_dir が C:/ を相対パスと取り違えた: $(cd "$T/r16a" && PATH="$T/wingit2:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
 # 一時ファイルの検査は、対象のファイルが無ければ通さない
 ! tmp_ok "$T/no-such-file.sh" && ok "一時ファイルの検査は、対象のファイルが無ければ通さない" || ng "無いファイルを通した"
+# バックスラッシュ形式（C:\...）と UNC（\\server\...）も Windows の絶対パスとして扱い、区切りを / にそろえる
+mkdir -p "$T/wingit3"
+printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) printf "%%s\\n" "C:\\\\Users\\\\u\\\\hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit3/git"; chmod +x "$T/wingit3/git"
+( cd "$T/r16a" && PATH="$T/wingit3:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "C:/Users/u/hooks" ] ) && ok "hooks_dir は C:\\ 形式も絶対パスとして扱う" || ng "C:\\ 形式: $(cd "$T/r16a" && PATH="$T/wingit3:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
+mkdir -p "$T/wingit4"
+printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) printf "%%s\\n" "\\\\\\\\srv\\\\share\\\\hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit4/git"; chmod +x "$T/wingit4/git"
+( cd "$T/r16a" && PATH="$T/wingit4:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "//srv/share/hooks" ] ) && ok "hooks_dir は UNC 形式も絶対パスとして扱う" || ng "UNC 形式: $(cd "$T/r16a" && PATH="$T/wingit4:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
+# 一時ファイルを作れないときは、escalation-check.sh の失敗と取り違えない文言で記録する
+grep -q '一時ファイルを作れない' "$RR" && ok "一時ファイルを作れないときは、その旨を記録する" || ng "一時ファイルを作れないときの記録が無い"
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]

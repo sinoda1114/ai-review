@@ -19,11 +19,19 @@ record_file() {
 
 # abs_git_path <リポジトリの中のディレクトリ> <rev-parse の引数...>: git が返すパスを絶対パスにする
 #   （絶対パスで返させる書式の指定は git 2.31 より前に無いので使わない。相対パスは -C のディレクトリから解く）
+# win_abs <パス>: Windows の絶対パス（C:/・C:\・\\server）なら区切りを / にそろえて出し、0 を返す
+win_abs() {
+  case "$1" in
+    [A-Za-z]:[/\\]* | '\\'*) printf '%s\n' "$1" | tr '\\' '/'; return 0 ;;
+  esac
+  return 1
+}
+
 abs_git_path() {
   local d="$1" p; shift
   p="$(git -C "$d" rev-parse "$@" 2>/dev/null)" && [ -n "$p" ] || return 1
-  # C:/ の形は Git for Windows の絶対パス
-  case "$p" in /* | [A-Za-z]:/*) ;; *) p="$(CDPATH='' cd -- "$d" 2>/dev/null && pwd)/$p" || return 1 ;; esac
+  win_abs "$p" && return 0   # Git for Windows の絶対パス
+  case "$p" in /*) ;; *) p="$(CDPATH='' cd -- "$d" 2>/dev/null && pwd)/$p" || return 1 ;; esac
   printf '%s\n' "$p"
 }
 
@@ -42,8 +50,9 @@ hooks_dir() {
     hp="$(abs_git_path "$d" --git-common-dir)" || return 1
     printf '%s/hooks\n' "$hp"; return 0
   fi
+  win_abs "$hp" && return 0   # Git for Windows の絶対パス
   case "$hp" in
-    /* | [A-Za-z]:/*) ;;   # C:/ の形は Git for Windows の絶対パス
+    /*) ;;
     *) top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null)" || top="$(CDPATH='' cd -- "$d" 2>/dev/null && pwd)" || return 1; hp="$top/$hp" ;;
   esac
   printf '%s\n' "$hp"
