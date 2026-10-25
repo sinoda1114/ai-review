@@ -68,5 +68,5 @@ if ! "$py" -I "$here/gate.py" "$@" > "$tmp"; then
   rm -f "$tmp"; exit 1
 fi
 mv "$tmp" "$f"
-record_compat_copy "$f" || true   # 入っているフックが古い版なら、知らせて古い場所にも写しを置く
+warn_old_hook   # 古い版のフックが入っていれば、ゲートが正しく働かないことと入れ直しを知らせ、古い場所の記録を消す
 "$py" -I "$here/gate.py" resolve --latest "$f" --list
