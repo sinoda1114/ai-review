@@ -316,7 +316,7 @@ printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) printf "%%s\\n" "\\\\\
 # 一時ファイルを作れないときは、escalation-check.sh の失敗と取り違えない文言で記録する
 grep -q '一時ファイルを作れない' "$RR" && ok "一時ファイルを作れないときは、その旨を記録する" || ng "一時ファイルを作れないときの記録が無い"
 # Windows でない環境では、C:/ の形は（c: という名前のディレクトリの下の）相対パスのまま扱う
-mkdir -p "$T/winpath-only"; printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --git-common-dir ] && { echo "C:/repo/.git"; exit 0; }; done\nexec "%s" "$@"\n' "$realgit16" > "$T/winpath-only/git"; chmod +x "$T/winpath-only/git"
+mkdir -p "$T/winpath-only"; printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --git-common-dir ] && { echo "C:/repo/.git"; exit 0; }; done\nexec "%s" "$@"\n' "$realgit16" > "$T/winpath-only/git"; chmod +x "$T/winpath-only/git"; printf '#!/bin/sh\necho Linux\n' > "$T/winpath-only/uname"; chmod +x "$T/winpath-only/uname"   # Windows でない環境のふり（Windows の上でも同じ結果になる）
 ( PATH="$T/winpath-only:$PATH"; . "$here/reports-guard.sh"; [ "$(abs_git_path "$T/r16a" --git-common-dir)" != "C:/repo/.git" ] ) && ok "Windows でなければ C:/ の形を絶対パスとみなさない" || ng "Windows でないのに C:/ を絶対パスとみなした"
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]
