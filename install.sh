@@ -190,6 +190,10 @@ case "$hooks" in
   "~"*|"%("*) echo "グローバルの core.hooksPath の ~user や %(prefix) の形（${hooks}）には対応していません。絶対パスで設定し直してから実行してください。" >&2; exit 1 ;;
 esac
 hooks="$(norm_path "$hooks")"
+# . や .. の要素があると、まだ無い部分を挟んだときに確かめる経路と mkdir の作る経路がずれるので、扱わない
+case "/$hooks/" in
+  */./*|*/../*) echo "グローバルの core.hooksPath に . や .. の要素があります（${hooks}）。それを含まない絶対パスで設定し直してから実行してください。" >&2; exit 1 ;;
+esac
 set_hooks_path=0
 if [ -z "$hooks" ]; then
   hooks="$HOME/.git-hooks"; set_hooks_path=1
@@ -234,7 +238,9 @@ if unsafe_route "$hooks"; then
   exit 1
 fi
 # /tmp の形の場所を通るなら、置き場所が消えた後に他人に同じ名前で作り直されうる（再起動や定期の掃除で消える）
+tmp_warned=0
 if [ -n "$route_tmp" ]; then
+  tmp_warned=1
   echo "== 注意: フックの置き場所（${hooks}）が、他人が書き込める ${route_tmp} の下にあります。消えると他人に作り直され、そこに置かれたフックが push のたびにあなたの権限で動くことがあります。ホームの下に置くことを勧めます" >&2
 fi
 if [ -e "$hooks" ] && [ ! -O "$hooks" ]; then
@@ -280,6 +286,10 @@ if [ ! -e "$hooks" ]; then
     exit 1
   fi
   echo "  フックの置き場所を作りました: ${hooks}"
+  # 作る前は、まだ無い部分の先（リンクの中の .. など）までたどれないことがある
+  if [ -n "$route_tmp" ] && [ "$tmp_warned" -eq 0 ]; then
+    echo "== 注意: 作ったフックの置き場所（${hooks}）は、他人が書き込める ${route_tmp} を通ります。消えると他人に作り直され、そこに置かれたフックが push のたびにあなたの権限で動くことがあります。ホームの下に置くことを勧めます" >&2
+  fi
 fi
 if [ ! -w "$hooks" ] || [ ! -x "$hooks" ]; then
   echo "フックの置き場所（${hooks}）に書き込めません。権限を確かめてから実行してください。" >&2

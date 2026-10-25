@@ -404,21 +404,15 @@ if [ -k /tmp ] && [ "$(ls -ldn /tmp/ | awk '{print $3}')" = 0 ]; then
   HOME="$T/h51" GIT_CONFIG_GLOBAL="$T/h51/.gitconfig" bash "$INSTALL" >"$T/out54" 2>&1; rc=$?
   rm -rf "$tmpd"
   [ $rc -eq 0 ] && grep -q '作り直され' "$T/out54" && ok "/tmp に置いたリンクを通る置き場所にも注意を出す" || ng "/tmp のリンクで注意なし rc=$rc $(tail -2 "$T/out54")"
-  rm -rf "$T/h54"; mkdir -p "$T/h54/deep"; tmpd2="$(mktemp -d /tmp/ai-review-L2.XXXXXX)" || exit 2; tmp_extra="$tmp_extra $tmpd2"; ln -s "$T/h54/deep" "$tmpd2/L"
-  HOME="$T/h54" GIT_CONFIG_GLOBAL="$T/h54/.gitconfig" git config --global core.hooksPath "$tmpd2/L/../hooks"
-  HOME="$T/h54" GIT_CONFIG_GLOBAL="$T/h54/.gitconfig" bash "$INSTALL" >"$T/out57" 2>&1; rc=$?
-  rm -rf "$tmpd2"
-  [ $rc -eq 0 ] && grep -q '作り直され' "$T/out57" && ok "/tmp に置いたリンクを経由して .. で出るパスにも注意を出す" || ng "/tmp のリンクと .. で注意なし rc=$rc $(tail -2 "$T/out57")"
-  rm -rf "$T/h53"; mkdir -p "$T/h53"; ptmp="$(cd -P /tmp && pwd -P)"; ph53="$(cd -P "$T/h53" && pwd -P)"; pparent="$(dirname "$ptmp")"
-  case "$ph53" in
-    "$ptmp"/*) echo "  SKIP テストの場所が /tmp の下にある（注意が出るのが正しい）" ;;
-    "${pparent%/}"/*)
-      HOME="$T/h53" GIT_CONFIG_GLOBAL="$T/h53/.gitconfig" git config --global core.hooksPath "$ptmp/..${ph53#"${pparent%/}"}/.git-hooks"
-      HOME="$T/h53" GIT_CONFIG_GLOBAL="$T/h53/.gitconfig" bash "$INSTALL" >"$T/out56" 2>&1; rc=$?
-      [ $rc -eq 0 ] && ! grep -q '作り直され' "$T/out56" && ok "/tmp を通ってから .. で外に出るパスでは注意を出さない" || ng "/tmp/.. で注意が出た rc=$rc $(tail -2 "$T/out56")" ;;
-    *) echo "  SKIP テストの場所が /tmp の親の下にない" ;;
-  esac
 else echo "  SKIP /tmp が root のスティッキービット付きでない"; fi
+
+echo "4y8. core.hooksPath に . や .. の要素があれば、何も書き換えずに止まる"
+for v in "$T/h55/new/../hooks" "$T/h55/./hooks"; do
+  rm -rf "$T/h55"; mkdir -p "$T/h55"
+  HOME="$T/h55" GIT_CONFIG_GLOBAL="$T/h55/.gitconfig" git config --global core.hooksPath "$v"
+  HOME="$T/h55" GIT_CONFIG_GLOBAL="$T/h55/.gitconfig" bash "$INSTALL" >"$T/out58" 2>&1; rc=$?
+  [ $rc -ne 0 ] && grep -q '\.\.' "$T/out58" && [ ! -e "$T/h55/.claude" ] && [ ! -e "$T/h55/new" ] && ok "${v##*/h55/} の形では止まる" || ng "${v##*/h55/}: rc=$rc $(tail -2 "$T/out58")"
+done
 
 echo "4y7. まだ無い置き場所でも、リンク越しに同じ場所を指す上書きは止めない"
 rm -rf "$T/h52" "$T/h52alias"; mkdir -p "$T/h52"; ln -s "$T/h52" "$T/h52alias"
