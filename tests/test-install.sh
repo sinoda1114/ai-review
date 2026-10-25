@@ -6,7 +6,8 @@ root="$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)"
 INSTALL="$root/install.sh"
 [ -f "$INSTALL" ] || { echo "見つからない: $INSTALL" >&2; exit 2; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/install-test.XXXXXX")" || exit 2
-trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
+tmp_extra=""   # /tmp に直接作るもの（4y6）も、途中で止まったときに消す
+trap '[ -n "${KEEP:-}" ] || rm -rf "$T" $tmp_extra' EXIT
 pass=0; fail=0
 ok(){ echo "  PASS $1"; pass=$((pass+1)); }
 ng(){ echo "  FAIL $1"; fail=$((fail+1)); }
@@ -393,16 +394,16 @@ HOME="$T/home26" GIT_CONFIG_GLOBAL="$T/home26/.gitconfig" bash "$INSTALL" >"$T/o
 
 echo "4y6. 置き場所が /tmp のような誰でも書き込める場所の下なら、消えた後に作り直されうると知らせる"
 if [ -k /tmp ] && [ "$(ls -ldn /tmp/ | awk '{print $3}')" = 0 ]; then
-  rm -rf "$T/home49"; mkdir -p "$T/home49"; tmph="$(mktemp -d /tmp/ai-review-hooks.XXXXXX)"
+  rm -rf "$T/home49"; mkdir -p "$T/home49"; tmph="$(mktemp -d /tmp/ai-review-hooks.XXXXXX)"; tmp_extra="$tmp_extra $tmph"
   HOME="$T/home49" GIT_CONFIG_GLOBAL="$T/home49/.gitconfig" git config --global core.hooksPath "$tmph"
   HOME="$T/home49" GIT_CONFIG_GLOBAL="$T/home49/.gitconfig" bash "$INSTALL" >"$T/out52" 2>&1; rc=$?
   rm -rf "$tmph"
-  [ $rc -eq 0 ] && grep -q '作り直される' "$T/out52" && ok "/tmp の下の置き場所には注意を出す" || ng "/tmp の注意なし rc=$rc $(tail -2 "$T/out52")"
-  rm -rf "$T/h51"; mkdir -p "$T/h51/real"; tmpl="$(mktemp -u /tmp/ai-review-L.XXXXXX)"; ln -s "$T/h51/real" "$tmpl"
+  [ $rc -eq 0 ] && grep -q '作り直され' "$T/out52" && ok "/tmp の下の置き場所には注意を出す" || ng "/tmp の注意なし rc=$rc $(tail -2 "$T/out52")"
+  rm -rf "$T/h51"; mkdir -p "$T/h51/real"; tmpd="$(mktemp -d /tmp/ai-review-L.XXXXXX)"; tmp_extra="$tmp_extra $tmpd"; tmpl="$tmpd/L"; ln -s "$T/h51/real" "$tmpl"
   HOME="$T/h51" GIT_CONFIG_GLOBAL="$T/h51/.gitconfig" git config --global core.hooksPath "$tmpl/hooks"
   HOME="$T/h51" GIT_CONFIG_GLOBAL="$T/h51/.gitconfig" bash "$INSTALL" >"$T/out54" 2>&1; rc=$?
-  rm -f "$tmpl"
-  [ $rc -eq 0 ] && grep -q '作り直される' "$T/out54" && ok "/tmp に置いたリンクを通る置き場所にも注意を出す" || ng "/tmp のリンクで注意なし rc=$rc $(tail -2 "$T/out54")"
+  rm -rf "$tmpd"
+  [ $rc -eq 0 ] && grep -q '作り直され' "$T/out54" && ok "/tmp に置いたリンクを通る置き場所にも注意を出す" || ng "/tmp のリンクで注意なし rc=$rc $(tail -2 "$T/out54")"
 else echo "  SKIP /tmp が root のスティッキービット付きでない"; fi
 
 echo "4y7. まだ無い置き場所でも、リンク越しに同じ場所を指す上書きは止めない"

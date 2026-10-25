@@ -137,7 +137,7 @@ unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リ
     fi
     [ -e "$next" ] || return 1   # ここから先はまだ無い（umask 022 で作る）
     [ -d "$next" ] || { route_problem="${next}（ディレクトリではありません）"; return 0; }
-    if is_system_tmp "$next"; then route_tmp="$next"; fi
+    if is_system_tmp "$next" && writable_by_others "$next"; then route_tmp="$next"; fi
     if unsafe_dir "$next"; then route_problem="${next}（持ち主か権限）"; return 0; fi
     cur="$next"
   done
@@ -231,7 +231,7 @@ if unsafe_route "$hooks"; then
 fi
 # /tmp の形の場所を通るなら、置き場所が消えた後に他人に同じ名前で作り直されうる（再起動や定期の掃除で消える）
 if [ -n "$route_tmp" ]; then
-  echo "== 注意: フックの置き場所（${hooks}）が、誰でも書き込める ${route_tmp} の下にあります。消えると他人に作り直されることがあるので、ホームの下に置くことを勧めます" >&2
+  echo "== 注意: フックの置き場所（${hooks}）が、誰でも書き込める ${route_tmp} の下にあります。消えると他人に作り直され、そこに置かれたフックが push のたびにあなたの権限で動くことがあります。ホームの下に置くことを勧めます" >&2
 fi
 if [ -e "$hooks" ] && [ ! -O "$hooks" ]; then
   echo "フックの置き場所（${hooks}）が自分の持ち物ではありません。自分の持ち物の場所に core.hooksPath を設定し直してから実行してください。" >&2
