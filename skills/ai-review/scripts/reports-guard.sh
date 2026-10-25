@@ -17,11 +17,11 @@ record_file() {
   printf '%s/ai-review/latest.json\n' "$gd"
 }
 
-# record_compat_copy <記録>: 入っている pre-push フックが古い版（記録を作業ツリーの .review-reports から読む）なら、
-#   知らせて、入れ直すまでの間だけ古い場所にも写しを置く。スキルはリンクで入っていてすぐ新しくなるが、フックは写しなので、
-#   入れ直すまで古い版のまま残る（写しを置かないと push が必ず止まる）。新しい版のフックは古い場所を読まないので、守りは弱まらない
-record_compat_copy() {
-  local rec="$1" top hp hk t old=""
+# warn_old_hook: 入っている pre-push フックが古い版（記録を作業ツリーの .review-reports から読む）なら、
+#   push が止まることと入れ直しの手順を知らせ、古い場所に残った記録を消す。古い場所に写しは置かない
+#   （置くと、作業ツリーに仕込んだ偽の記録で古いフックを通せる抜け道が残る。古いフックのままでは止める方に倒す）
+warn_old_hook() {
+  local top hp hk old=""
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
   hp="$(git config --type=path --includes --get core.hooksPath 2>/dev/null)"   # ~ や ~user は git 自身に展開させる
   [ -n "$hp" ] || hp="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks"
@@ -33,15 +33,10 @@ record_compat_copy() {
   [ -n "$old" ] || return 0
   local how="install.sh を実行し直してください"
   [ "$old" = "$hp/pre-push" ] && [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] || how="${old} を消すか、スキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
-  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。${how}。入れ直すまでの間だけ、古い場所にも記録の写しを置きます（その間は、作業ツリーに残った偽の記録で push が通りうる）" >&2
-  # 先に古い場所の記録を消す（写しに失敗しても、前の記録を古いフックに信用させない）
+  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。このままでは push が止まります。${how}" >&2
+  # 古い場所に残った記録（偽の記録かもしれない）を、古いフックに信用させない
   rm -f "$top/.review-reports/latest.json" 2>/dev/null
-  if [ ! -e "$top/.review-reports/latest.json" ] && [ ! -L "$top/.review-reports/latest.json" ] && mkdir -p "$top/.review-reports" 2>/dev/null && t="$(mktemp "$top/.review-reports/latest.json.tmp.XXXXXX")"; then
-    cp "$rec" "$t" && mv -f "$t" "$top/.review-reports/latest.json" && return 0
-    rm -f "$t"
-  fi
-  echo "注意: 古い場所に記録の写しを置けませんでした（古い版のフックでは push が止まります。install.sh を実行し直してください）" >&2
-  return 1
+  return 0
 }
 
 # reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）

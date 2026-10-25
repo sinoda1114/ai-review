@@ -191,6 +191,6 @@ if ! "$py" -I "$here/gate.py" "$@" > "$tmp"; then
 fi
 # 途中で落ちて壊れた latest.json を残さないよう、書き終えてから置き換える
 mv "$tmp" "$rec"
-record_compat_copy "$rec" || true   # 入っているフックが古い版なら、知らせて古い場所にも写しを置く
+warn_old_hook   # 入っているフックが古い版なら、push が止まることと入れ直しを知らせる
 # 表示は要約だけにし、制御文字（C0・C1）を潰す（latest.json の値はレビュー対象のファイル名などを含む）
 "$py" -I "$here/gate.py" resolve --latest "$rec" --list
