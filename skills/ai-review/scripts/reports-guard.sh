@@ -43,7 +43,7 @@ hooks_dir() {
     printf '%s/hooks\n' "$hp"; return 0
   fi
   case "$hp" in
-    /*) ;;
+    /* | [A-Za-z]:/*) ;;   # C:/ の形は Git for Windows の絶対パス
     *) top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null)" || top="$(CDPATH='' cd -- "$d" 2>/dev/null && pwd)" || return 1; hp="$top/$hp" ;;
   esac
   printf '%s\n' "$hp"

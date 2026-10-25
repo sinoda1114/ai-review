@@ -290,7 +290,7 @@ printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --git-common-dir ] && { echo "C:/r
 mkrepo "$T/r16a"
 ( PATH="$T/wingit:$PATH"; . "$here/reports-guard.sh"; [ "$(abs_git_path "$T/r16a" --git-common-dir)" = "C:/repo/.git" ] ) && ok "C:/ 形式のパスは絶対パスとして扱う" || ng "C:/ を相対パスと取り違えた: $(PATH="$T/wingit:$PATH"; . "$here/reports-guard.sh"; abs_git_path "$T/r16a" --git-common-dir)"
 # 予測できる名前の一時ファイル（$$ や固定の名前に書いてから mv する）を見つける検査。悪い例を見つけられることも確かめる
-tmp_ok(){ ! grep -nE '(\.tmp(\.\$\$)?"?[[:space:]]*$|\.tmp\.\$\$|tmp="[^"$]*\.tmp"|>[[:space:]]*"[^"]*\.tmp")' "$1" | grep -v '^[0-9]*:[[:space:]]*#' | grep -q .; }
+tmp_ok(){ [ -f "$1" ] || return 1; ! grep -nE '(\.tmp(\.\$\$)?"?[[:space:]]*$|\.tmp\.\$\$|tmp="[^"$]*\.tmp"|>[[:space:]]*"[^"]*\.tmp")' "$1" | grep -v '^[0-9]*:[[:space:]]*#' | grep -q .; }
 printf 'x=1 > "$out/escalation.json.tmp"\n' > "$T/bad1.sh"; printf 'tmp="$f.tmp.$$"\n' > "$T/bad2.sh"
 ! tmp_ok "$T/bad1.sh" && ! tmp_ok "$T/bad2.sh" && ok "一時ファイルの検査は、予測できる名前の悪い例を見つける" || ng "検査が悪い例を見落とした"
 tmp_ok "$RR" && tmp_ok "$here/record-gate.sh" && tmp_ok "$here/resolve-item.sh" && ok "run-reviews.sh・record-gate.sh・resolve-item.sh に予測できる名前の一時ファイルが無い" || ng "予測できる一時ファイル: $(grep -nE '\.tmp' "$RR" "$here/record-gate.sh" "$here/resolve-item.sh" | head -3)"
@@ -300,5 +300,11 @@ printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --show-toplevel ] && { echo "%s/no
 mkrepo "$T/r16b"; h16b="$(git -C "$T/r16b" rev-parse HEAD)"
 (cd "$T/r16b" && printf 'refs/heads/main %s refs/heads/main %s\n' "$h16b" $zero | PATH="$T/gonegit:$PATH" bash "$HOOK" origin x > "$T/r16b.out" 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q '移れません' "$T/r16b.out" && ok "pre-push はルートに移れなければ止める（動かして確かめる）" || ng "ルートに移れないのに: rc=$rc $(head -2 "$T/r16b.out")"
+# hooks_dir も C:/ 形式の core.hooksPath を絶対パスとして扱う
+mkdir -p "$T/wingit2"
+printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) echo "C:/Users/u/.git-hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit2/git"; chmod +x "$T/wingit2/git"
+( cd "$T/r16a" && PATH="$T/wingit2:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "C:/Users/u/.git-hooks" ] ) && ok "hooks_dir も C:/ 形式を絶対パスとして扱う" || ng "hooks_dir が C:/ を相対パスと取り違えた: $(cd "$T/r16a" && PATH="$T/wingit2:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
+# 一時ファイルの検査は、対象のファイルが無ければ通さない
+! tmp_ok "$T/no-such-file.sh" && ok "一時ファイルの検査は、対象のファイルが無ければ通さない" || ng "無いファイルを通した"
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]
