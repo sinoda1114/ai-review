@@ -33,7 +33,7 @@ warn_old_hook() {
   [ -n "$old" ] || return 0
   local how="install.sh を実行し直してください"
   [ "$old" = "$hp/pre-push" ] && [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] || how="${old} を消すか、スキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
-  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。このままでは push が止まります。${how}" >&2
+  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。入れ直すまでゲートは効いていません（記録が無ければ push は止まりますが、作業ツリーに記録が置かれると通ります）。${how}" >&2
   # 古い場所に残った記録（偽の記録かもしれない）を、古いフックに信用させない
   rm -f "$top/.review-reports/latest.json" 2>/dev/null
   return 0

@@ -154,7 +154,7 @@ printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest
 git -C "$T/r12" config core.hooksPath "$T/r12hooks"
 gd12="$(git -C "$T/r12" rev-parse --absolute-git-dir)"; mkdir -p "$gd12/ai-review"; rec_json "$(git -C "$T/r12" rev-parse HEAD)" > "$gd12/ai-review/latest.json"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12.err"
-[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q 'install.sh' "$T/r12.err" && grep -q '止まります' "$T/r12.err" && ok "古い版のフックなら、写しを置かずに、push が止まることと入れ直しを知らせる" || ng "写し・案内: $(cat "$T/r12.err")"
+[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q 'install.sh' "$T/r12.err" && grep -q 'ゲートは効いていません' "$T/r12.err" && ok "古い版のフックなら、写しを置かずに、push が止まることと入れ直しを知らせる" || ng "写し・案内: $(cat "$T/r12.err")"
 # 古い場所に残っていた記録（偽の記録かもしれない）は、古いフックに信用させないよう消す
 mkdir -p "$T/r12/.review-reports"; rec_json "$(git -C "$T/r12" rev-parse HEAD)" > "$T/r12/.review-reports/latest.json"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> /dev/null
@@ -165,7 +165,7 @@ cp "$HOOK" "$T/r12hooks/pre-push"
 # 呼び継ぐ先（リポジトリの .git/hooks/pre-push）が古い版でも、知らせる
 printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest.json"\n' > "$T/r12/.git/hooks/pre-push"; chmod +x "$T/r12/.git/hooks/pre-push"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12c.err"
-[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q '止まります' "$T/r12c.err" && ok "呼び継ぐ先が古い版でも、知らせる（写しは置かない）" || ng "呼び継ぐ先: $(cat "$T/r12c.err")"
+[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q 'ゲートは効いていません' "$T/r12c.err" && ok "呼び継ぐ先が古い版でも、知らせる（写しは置かない）" || ng "呼び継ぐ先: $(cat "$T/r12c.err")"
 # 書き手は古い場所に写しを置かない
 ! grep -q 'record_compat_copy' "$here/record-gate.sh" "$here/resolve-item.sh" "$here/reports-guard.sh" && ok "互換の写しの仕組みが残っていない" || ng "record_compat_copy が残っている"
 grep -q '# ai-review-record: git-dir' "$HOOK" && ok "フックに版の目印がある" || ng "フックに版の目印が無い"
