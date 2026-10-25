@@ -106,7 +106,7 @@ if [ ! -f "$f" ]; then
   if [ -f .review-reports/latest.json ]; then
     echo "[ai-review] 拒否: 記録の置き場所が変わりました（作業ツリーの .review-reports から git のディレクトリの中へ）。/ai-review を回し直してください" >&2
   else
-    echo "[ai-review] 拒否: 記録（$f）がありません。push 前に /ai-review を実行してください" >&2
+    echo "[ai-review] 拒否: 記録（${f}）がありません。push 前に /ai-review を実行してください" >&2
   fi
   exit 1
 fi
