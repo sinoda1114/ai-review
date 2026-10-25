@@ -22,7 +22,8 @@ record_file() {
 abs_git_path() {
   local d="$1" p; shift
   p="$(git -C "$d" rev-parse "$@" 2>/dev/null)" && [ -n "$p" ] || return 1
-  case "$p" in /*) ;; *) p="$(CDPATH='' cd -- "$d" 2>/dev/null && pwd)/$p" || return 1 ;; esac
+  # C:/ の形は Git for Windows の絶対パス
+  case "$p" in /* | [A-Za-z]:/*) ;; *) p="$(CDPATH='' cd -- "$d" 2>/dev/null && pwd)/$p" || return 1 ;; esac
   printf '%s\n' "$p"
 }
 

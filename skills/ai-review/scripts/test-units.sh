@@ -283,7 +283,22 @@ mkdir -p "$T/oldgit2"
 printf '#!/bin/sh\nfor a in "$@"; do case "$a" in --type*) echo "error: unknown option $a" >&2; exit 129 ;; esac; done\nexec "%s" "$@"\n' "$realgit" > "$T/oldgit2/git"; chmod +x "$T/oldgit2/git"
 mkrepo "$T/r14r"; git -C "$T/r14r" config core.hooksPath "$T/r14rhooks"
 ( cd "$T/r14r" && PATH="$T/oldgit2:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "$T/r14rhooks" ] ) && ok "--type=path が無い git でも core.hooksPath を読む" || ng "古い git の hooks_dir: $(cd "$T/r14r" && PATH="$T/oldgit2:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
-# pre-push は作業ツリーのルートに移れなければ止める
-! grep -q 'cd "$repo_root" || exit 0' "$HOOK" && ok "pre-push はルートに移れなければ止める" || ng "pre-push がルートに移れないときに通す"
+echo "15. Issue #16"
+# Git for Windows が返す C:/ 形式の絶対パスを、相対パスと取り違えない
+mkdir -p "$T/wingit"; realgit16="$(command -v git)"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --git-common-dir ] && { echo "C:/repo/.git"; exit 0; }; done\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit/git"; chmod +x "$T/wingit/git"
+mkrepo "$T/r16a"
+( PATH="$T/wingit:$PATH"; . "$here/reports-guard.sh"; [ "$(abs_git_path "$T/r16a" --git-common-dir)" = "C:/repo/.git" ] ) && ok "C:/ 形式のパスは絶対パスとして扱う" || ng "C:/ を相対パスと取り違えた: $(PATH="$T/wingit:$PATH"; . "$here/reports-guard.sh"; abs_git_path "$T/r16a" --git-common-dir)"
+# 予測できる名前の一時ファイル（$$ や固定の名前に書いてから mv する）を見つける検査。悪い例を見つけられることも確かめる
+tmp_ok(){ ! grep -nE '(\.tmp(\.\$\$)?"?[[:space:]]*$|\.tmp\.\$\$|tmp="[^"$]*\.tmp"|>[[:space:]]*"[^"]*\.tmp")' "$1" | grep -v '^[0-9]*:[[:space:]]*#' | grep -q .; }
+printf 'x=1 > "$out/escalation.json.tmp"\n' > "$T/bad1.sh"; printf 'tmp="$f.tmp.$$"\n' > "$T/bad2.sh"
+! tmp_ok "$T/bad1.sh" && ! tmp_ok "$T/bad2.sh" && ok "一時ファイルの検査は、予測できる名前の悪い例を見つける" || ng "検査が悪い例を見落とした"
+tmp_ok "$RR" && tmp_ok "$here/record-gate.sh" && tmp_ok "$here/resolve-item.sh" && ok "run-reviews.sh・record-gate.sh・resolve-item.sh に予測できる名前の一時ファイルが無い" || ng "予測できる一時ファイル: $(grep -nE '\.tmp' "$RR" "$here/record-gate.sh" "$here/resolve-item.sh" | head -3)"
+# pre-push は作業ツリーのルートに移れなければ止める（動かして確かめる）
+mkdir -p "$T/gonegit"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --show-toplevel ] && { echo "%s/no-such-dir"; exit 0; }; done\nexec "%s" "$@"\n' "$T" "$realgit16" > "$T/gonegit/git"; chmod +x "$T/gonegit/git"
+mkrepo "$T/r16b"; h16b="$(git -C "$T/r16b" rev-parse HEAD)"
+(cd "$T/r16b" && printf 'refs/heads/main %s refs/heads/main %s\n' "$h16b" $zero | PATH="$T/gonegit:$PATH" bash "$HOOK" origin x > "$T/r16b.out" 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q '移れません' "$T/r16b.out" && ok "pre-push はルートに移れなければ止める（動かして確かめる）" || ng "ルートに移れないのに: rc=$rc $(head -2 "$T/r16b.out")"
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]
