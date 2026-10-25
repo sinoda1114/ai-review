@@ -153,7 +153,7 @@ OLDHOOK='#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/lates
 oldrec(){ mkdir -p "$T/r12/.review-reports"; rec_json x > "$T/r12/.review-reports/latest.json"; }
 warn12(){ ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$1"; }
 mkrepo "$T/r12"; mkdir -p "$T/r12hooks"
-printf "$OLDHOOK" > "$T/r12hooks/pre-push"; chmod +x "$T/r12hooks/pre-push"
+printf '%b' "$OLDHOOK" > "$T/r12hooks/pre-push"; chmod +x "$T/r12hooks/pre-push"
 git -C "$T/r12" config core.hooksPath "$T/r12hooks"
 oldrec; warn12 "$T/r12.err"
 [ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q '正しく働きません' "$T/r12.err" && grep -q '置き換えて' "$T/r12.err" && ! grep -q '消すか' "$T/r12.err" && ok "効いているフックが古い版なら、置き換えを知らせ（削除は勧めない）、古い場所の記録を消す" || ng "効いているフック: $(cat "$T/r12.err")"
@@ -161,7 +161,7 @@ oldrec; warn12 "$T/r12.err"
 cp "$HOOK" "$T/r12hooks/pre-push"; oldrec; warn12 "$T/r12b.err"
 [ ! -e "$T/r12/.review-reports/latest.json" ] && [ ! -s "$T/r12b.err" ] && ok "新しい版のフックなら何も言わず、古い場所の記録は消す" || ng "新しい版: $(cat "$T/r12b.err")"
 # リポジトリのフック（.git/hooks/pre-push）が古い版でも知らせる（呼び継ぐ仕組みは新しいフックとは限らない）
-printf "$OLDHOOK" > "$T/r12/.git/hooks/pre-push"; chmod +x "$T/r12/.git/hooks/pre-push"
+printf '%b' "$OLDHOOK" > "$T/r12/.git/hooks/pre-push"; chmod +x "$T/r12/.git/hooks/pre-push"
 mkdir -p "$T/r12other"; printf '#!/bin/sh\nexit 0\n' > "$T/r12other/pre-push"; chmod +x "$T/r12other/pre-push"
 git -C "$T/r12" config core.hooksPath "$T/r12other"; warn12 "$T/r12c.err"
 grep -q '正しく働きません' "$T/r12c.err" && ok "効いているフックが別物でも、リポジトリのフックの古い版を知らせる" || ng "リポジトリのフック: $(cat "$T/r12c.err")"
