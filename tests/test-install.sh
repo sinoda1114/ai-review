@@ -6,7 +6,8 @@ root="$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)"
 INSTALL="$root/install.sh"
 [ -f "$INSTALL" ] || { echo "見つからない: $INSTALL" >&2; exit 2; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/install-test.XXXXXX")" || exit 2
-trap '[ -n "${KEEP:-}" ] || rm -rf "$T"' EXIT
+tmp_extra=""   # /tmp に直接作るもの（4y6）も、途中で止まったときに消す
+trap '[ -n "${KEEP:-}" ] || rm -rf "$T" $tmp_extra' EXIT   # tmp_extra には mktemp の英数字の名前だけを入れる
 pass=0; fail=0
 ok(){ echo "  PASS $1"; pass=$((pass+1)); }
 ng(){ echo "  FAIL $1"; fail=$((fail+1)); }
@@ -212,7 +213,8 @@ HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/o
 [ $rc -ne 0 ] && [ ! -e "$T/home23/shared/hooks/pre-push" ] && [ ! -e "$T/home23/.claude" ] && ok "グループが書き込める親の下には入れない" || ng "親の確認なし rc=$rc $(tail -2 "$T/out24")"
 chmod 1777 "$T/home23/shared"
 HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
-[ $rc -eq 0 ] && ok "スティッキービット付きの親（/tmp と同じ形）は通す" || ng "スティッキーで止まった rc=$rc $(tail -2 "$T/out24")"
+if [ "$(id -u)" -eq 0 ]; then [ $rc -eq 0 ] && ok "root の持ち物のスティッキーな親は /tmp の形として通す" || ng "root の /tmp の形で止まった rc=$rc"
+else [ $rc -ne 0 ] && grep -q 'home23/shared（' "$T/out24" && ok "本人の持ち物でも、他人が書き込めるスティッキービット付きの親は止める（root の /tmp の形だけ通す）" || ng "本人のスティッキーの親を通した rc=$rc $(tail -2 "$T/out24")"; fi
 chmod 755 "$T/home23/shared"
 personal=0   # install.sh と同じ条件で、利用者の専用グループかを決める
 if [ "$(id -gn)" = "$(id -un)" ] && [ "$(id -g)" = "$(id -u)" ] && command -v getent >/dev/null 2>&1; then
@@ -312,6 +314,13 @@ rm -rf "$T/decoy" "$T/home34"; mkdir -p "$T/decoy/$(basename "$root")/skills/ai-
 ( cd "$(dirname "$root")" && CDPATH="$T/decoy" HOME="$T/home34" GIT_CONFIG_GLOBAL="$T/home34/.gitconfig" bash "$(basename "$root")/install.sh" >"$T/out37" 2>&1 ); rc=$?
 [ $rc -eq 0 ] && [ "$(cd "$T/home34/.claude/skills/ai-review" && pwd -P)" = "$(cd "$root/skills/ai-review" && pwd -P)" ] && ok "CDPATH の影響を受けない" || ng "CDPATH: rc=$rc $(tail -2 "$T/out37")"
 
+echo "4z6b. 上書き値のリンクと .. は、実体の場所で比べる"
+rm -rf "$T/h50"; mkdir -p "$T/h50/hooks" "$T/h50/other/deep" "$T/h50/other/hooks"; ln -s "$T/h50/other/deep" "$T/h50/link"
+HOME="$T/h50" GIT_CONFIG_GLOBAL="$T/h50/.gitconfig" git config --global core.hooksPath "$T/h50/hooks"
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$T/h50/link/../hooks" \
+  HOME="$T/h50" GIT_CONFIG_GLOBAL="$T/h50/.gitconfig" bash "$INSTALL" >"$T/out53" 2>&1; rc=$?
+[ $rc -ne 0 ] && [ ! -e "$T/h50/hooks/pre-push" ] && ok "リンクの先の .. で別の場所を指す上書きでは止まる" || ng "論理パスで同じとみなした rc=$rc"
+
 echo "4z7. 置き場所に書き込めないなら、スキルにも設定にも触らずに止まる"
 if [ "$(id -u)" -eq 0 ]; then echo "  SKIP root はどこにでも書ける"; else
 rm -rf "$T/home35"; mkdir -p "$T/home35/.git-hooks"; chmod 555 "$T/home35/.git-hooks"
@@ -382,6 +391,34 @@ printf '[includeIf "gitdir:/my projects/"]\n\tpath = cond.gitconfig\n' > "$T/hom
 printf '[include]\n\tpath = %s\n' "$T/home26/設定 dir/main.gitconfig" > "$T/home26/.gitconfig"
 HOME="$T/home26" GIT_CONFIG_GLOBAL="$T/home26/.gitconfig" bash "$INSTALL" >"$T/out27" 2>&1; rc=$?
 [ $rc -eq 0 ] && grep -q 'includeIf' "$T/out27" && ok "空白・日本語を含む includeIf も見つける" || ng "空白入りの includeIf: rc=$rc"
+
+echo "4y6. 置き場所が /tmp のような誰でも書き込める場所の下なら、消えた後に作り直されうると知らせる"
+if [ -k /tmp ] && [ "$(ls -ldn /tmp/ | awk '{print $3}')" = 0 ]; then
+  rm -rf "$T/home49"; mkdir -p "$T/home49"; tmph="$(mktemp -d /tmp/ai-review-hooks.XXXXXX)" || exit 2; tmp_extra="$tmp_extra $tmph"
+  HOME="$T/home49" GIT_CONFIG_GLOBAL="$T/home49/.gitconfig" git config --global core.hooksPath "$tmph"
+  HOME="$T/home49" GIT_CONFIG_GLOBAL="$T/home49/.gitconfig" bash "$INSTALL" >"$T/out52" 2>&1; rc=$?
+  rm -rf "$tmph"
+  [ $rc -eq 0 ] && grep -q '作り直され' "$T/out52" && ok "/tmp の下の置き場所には注意を出す" || ng "/tmp の注意なし rc=$rc $(tail -2 "$T/out52")"
+  rm -rf "$T/h51"; mkdir -p "$T/h51/real"; tmpd="$(mktemp -d /tmp/ai-review-L.XXXXXX)" || exit 2; tmp_extra="$tmp_extra $tmpd"; tmpl="$tmpd/L"; ln -s "$T/h51/real" "$tmpl"
+  HOME="$T/h51" GIT_CONFIG_GLOBAL="$T/h51/.gitconfig" git config --global core.hooksPath "$tmpl/hooks"
+  HOME="$T/h51" GIT_CONFIG_GLOBAL="$T/h51/.gitconfig" bash "$INSTALL" >"$T/out54" 2>&1; rc=$?
+  rm -rf "$tmpd"
+  [ $rc -eq 0 ] && grep -q '作り直され' "$T/out54" && ok "/tmp に置いたリンクを通る置き場所にも注意を出す" || ng "/tmp のリンクで注意なし rc=$rc $(tail -2 "$T/out54")"
+else echo "  SKIP /tmp が root のスティッキービット付きでない"; fi
+
+echo "4y8. core.hooksPath に . や .. の要素があれば、何も書き換えずに止まる"
+for v in "$T/h55/new/../hooks" "$T/h55/./hooks"; do
+  rm -rf "$T/h55"; mkdir -p "$T/h55"
+  HOME="$T/h55" GIT_CONFIG_GLOBAL="$T/h55/.gitconfig" git config --global core.hooksPath "$v"
+  HOME="$T/h55" GIT_CONFIG_GLOBAL="$T/h55/.gitconfig" bash "$INSTALL" >"$T/out58" 2>&1; rc=$?
+  [ $rc -ne 0 ] && grep -q '\.\.' "$T/out58" && [ ! -e "$T/h55/.claude" ] && [ ! -e "$T/h55/new" ] && ok "${v##*/h55/} の形では止まる" || ng "${v##*/h55/}: rc=$rc $(tail -2 "$T/out58")"
+done
+
+echo "4y7. まだ無い置き場所でも、リンク越しに同じ場所を指す上書きは止めない"
+rm -rf "$T/h52" "$T/h52alias"; mkdir -p "$T/h52"; ln -s "$T/h52" "$T/h52alias"
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$T/h52alias/.git-hooks" \
+  HOME="$T/h52" GIT_CONFIG_GLOBAL="$T/h52/.gitconfig" bash "$INSTALL" >"$T/out55" 2>&1; rc=$?
+[ $rc -eq 0 ] && [ -x "$T/h52/.git-hooks/pre-push" ] && ok "リンク越しの同じ場所の上書きでは止めない" || ng "同じ場所を別とみなした rc=$rc $(tail -2 "$T/out55")"
 
 echo "4x. 置き場所の途中の親も、umask 002 でグループに書き込ませない"
 rm -rf "$T/home19"; mkdir -p "$T/home19"

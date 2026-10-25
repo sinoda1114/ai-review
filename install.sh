@@ -31,7 +31,7 @@ done
 unset GIT_CONFIG GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 MARK='# ai-review-managed-hook'   # このフックが入れたものかどうかを見分ける印の行
-repo="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo="$(CDPATH='' cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 src="$repo/skills/ai-review"
 [ -f "$src/SKILL.md" ] || { echo "スキルが見つかりません: ${src}" >&2; exit 1; }
 ts="$(date +%Y%m%d%H%M%S).$$"   # 同じ秒に実行しても退避名がぶつからないように
@@ -69,7 +69,7 @@ backup_root="$HOME/.claude/ai-review-backup"   # skills の外に退避する（
 
 # 導入先に直接 clone したリポジトリから実行すると、リポジトリ自身を退避してしまう
 if [ $hook_only -eq 0 ] && [ -d "$dst" ] && [ ! -L "$dst" ]; then
-  real_dst="$(cd "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ] \
+  real_dst="$(cd -P "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ] \
     || { echo "スキルの導入先（${dst}）に入れません。権限を確かめてから実行してください。" >&2; exit 1; }
   case "$src/" in
     "$real_dst"/*)
@@ -82,7 +82,7 @@ fi
 hook_skill="$dst"; [ $hook_only -eq 1 ] && hook_skill="$src"
 # フックの中では二重引用符の中に入るので、記号を含むパスは扱わない
 case "$hook_skill" in
-  *[!A-Za-z0-9/._\ -]*)
+  *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/._\ -]*)   # 範囲指定はロケールで広がるので、文字を並べる
     echo "スキルの場所に扱えない文字が含まれます: ${hook_skill}（英数字・/._- と空白のみ対応）" >&2
     [ $hook_only -eq 1 ] && echo "--hook-only はこのリポジトリの場所を使うので、そうした文字を含まない場所に clone し直してください。" >&2
     exit 1 ;;
@@ -104,34 +104,45 @@ writable_by_others() {  # $1 を他人か、専用でないグループが書き
 unsafe_path() {  # 自分の持ち物でないか、他人が書き込めるなら真
   [ ! -O "$1" ] || writable_by_others "$1"
 }
-unsafe_dir() {  # 親として危ないなら真。本人か root の持ち物で、他人が書き込めない（またはスティッキービット付きの /tmp の形）なら安全
+is_system_tmp() {  # root の持ち物でスティッキービット付き（/tmp の形）なら真。中の他人の持ち物は消せず、改名もできない
+  [ "$(ls -ldnL "$1" | awk '{print $3}')" = 0 ] && [ -n "$(find -H "$1" -maxdepth 0 -perm -1000 2>/dev/null)" ]
+}
+unsafe_dir() {  # 親として危ないなら真。本人か root の持ち物で、他人が書き込めない（または /tmp の形）なら安全
   local uid; uid="$(ls -ldnL "$1" | awk '{print $3}')"
   [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || return 0
-  [ -z "$(find -H "$1" -maxdepth 0 -perm -1000 2>/dev/null)" ] && writable_by_others "$1" && return 0
+  is_system_tmp "$1" && return 1
+  writable_by_others "$1" && return 0
   return 1
 }
 unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リンクは中身を展開して続ける。カーネルがパスを解決する順と同じ）。
-                  # 通るディレクトリが危ないか、リンクの持ち主が本人・root でなければ、その場所と理由を出して真
+                  # 通るディレクトリが危ないか、リンクの持ち主が本人・root でなければ、その場所と理由を route_problem に入れて真。
+                  # /tmp の形の場所の中で名前を引いたら、その場所を route_tmp に残す（実体のパスだけを見ると、/tmp に置いたリンクを見落とす）
   local cur=/ rest="$1" comp next target hops=0 uid
-  if unsafe_dir /; then printf '%s' "/（持ち主か権限）"; return 0; fi
+  route_problem=""; route_tmp=""
+  if unsafe_dir /; then route_problem="/（持ち主か権限）"; return 0; fi
   while [ -n "$rest" ]; do
     rest="${rest#/}"; comp="${rest%%/*}"
     if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
-    case "$comp" in ""|.) continue ;; ..) cur="$(dirname "$cur")"; continue ;; esac
+    case "$comp" in
+      ""|.) continue ;;
+      ..) cur="$(dirname "$cur")"; continue ;;   # .. は名前を引かないので、他人に差し替えられない
+    esac
     next="${cur%/}/$comp"
+    # /tmp の形の場所で名前を引くと、その名前（ディレクトリでもリンクでも）は、消えた後に他人に作り直されうる
+    if is_system_tmp "$cur" && writable_by_others "$cur"; then route_tmp="$cur"; fi
     if [ -L "$next" ]; then
       hops=$((hops + 1))
-      [ $hops -le 40 ] || { printf '%s' "${next}（リンクが多すぎます）"; return 0; }
+      [ $hops -le 40 ] || { route_problem="${next}（リンクが多すぎます）"; return 0; }
       uid="$(ls -ldn "$next" | awk '{print $3}')"
-      [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || { printf '%s' "${next}（リンクの持ち主が本人でも root でもありません）"; return 0; }
+      [ "$uid" = "$(id -u)" ] || [ "$uid" = 0 ] || { route_problem="${next}（リンクの持ち主が本人でも root でもありません）"; return 0; }
       target="$(readlink "$next")"
       case "$target" in /*) cur=/ ;; esac   # 相対のリンクは、リンクを置いた場所から
       rest="$target${rest:+/$rest}"
       continue
     fi
     [ -e "$next" ] || return 1   # ここから先はまだ無い（umask 022 で作る）
-    [ -d "$next" ] || { printf '%s' "${next}（ディレクトリではありません）"; return 0; }
-    if unsafe_dir "$next"; then printf '%s' "${next}（持ち主か権限）"; return 0; fi
+    [ -d "$next" ] || { route_problem="${next}（ディレクトリではありません）"; return 0; }
+    if unsafe_dir "$next"; then route_problem="${next}（持ち主か権限）"; return 0; fi
     cur="$next"
   done
   return 1
@@ -150,12 +161,19 @@ norm_path() {  # git と同じく先頭の ~ と ~/ を展開し、末尾の / �
   [ "$v" = / ] || v="${v%/}"
   printf '%s' "$v"
 }
-same_place() {  # 2 つの書き方が同じ場所を指すなら真（あるディレクトリは実体の形で比べる。相対パスは git がリポジトリごとに解決するので、同じとみなさない）
+canon_path() {  # 実体の形にする。まだ無い部分は、いちばん近くにある親を実体に直して付け足す（cd -P: .. をリンクの先で解決する）
+  local p="$1" rest=""
+  while [ ! -e "$p" ] && [ "$p" != / ]; do rest="/$(basename "$p")$rest"; p="$(dirname "$p")"; done
+  p="$(cd -P "$p" 2>/dev/null && pwd -P)" || { printf '%s' "$1"; return 0; }
+  [ "$p" = / ] && p=""
+  printf '%s' "$p$rest"
+}
+same_place() {  # 2 つの書き方が同じ場所を指すなら真（実体の形で比べる。相対パスは git がリポジトリごとに解決するので、同じとみなさない）
   local a b; a="$(norm_path "$1")"; b="$(norm_path "$2")"
   case "$a" in /*) ;; *) return 1 ;; esac
   case "$b" in /*) ;; *) return 1 ;; esac
   [ "$a" = "$b" ] && return 0
-  [ -d "$a" ] && [ -d "$b" ] && [ "$(cd "$a" && pwd -P)" = "$(cd "$b" && pwd -P)" ]
+  [ "$(canon_path "$a")" = "$(canon_path "$b")" ]
 }
 
 # フックの置き場所を決める（まだ書き換えない）
@@ -172,6 +190,10 @@ case "$hooks" in
   "~"*|"%("*) echo "グローバルの core.hooksPath の ~user や %(prefix) の形（${hooks}）には対応していません。絶対パスで設定し直してから実行してください。" >&2; exit 1 ;;
 esac
 hooks="$(norm_path "$hooks")"
+# . や .. の要素があると、まだ無い部分を挟んだときに確かめる経路と mkdir の作る経路がずれるので、扱わない
+case "/$hooks/" in
+  */./*|*/../*) echo "グローバルの core.hooksPath に . や .. の要素があります（${hooks}）。それを含まない絶対パスで設定し直してから実行してください。" >&2; exit 1 ;;
+esac
 set_hooks_path=0
 if [ -z "$hooks" ]; then
   hooks="$HOME/.git-hooks"; set_hooks_path=1
@@ -210,10 +232,16 @@ if [ -e "$hooks" ] && [ ! -d "$hooks" ]; then
   echo "フックの置き場所（${hooks}）がディレクトリではありません。core.hooksPath を直してから実行してください。" >&2
   exit 1
 fi
-if problem="$(unsafe_route "$hooks")"; then
-  echo "フックの置き場所（${hooks}）までの途中に問題があります: ${problem}" >&2
+if unsafe_route "$hooks"; then
+  echo "フックの置き場所（${hooks}）までの途中に問題があります: ${route_problem}" >&2
   echo "自分か root の持ち物でないか、他人（専用でないグループを含む）が書き込める場所があると、置き場所ごと差し替えられます。直すか別の場所にしてください。" >&2
   exit 1
+fi
+# /tmp の形の場所を通るなら、置き場所が消えた後に他人に同じ名前で作り直されうる（再起動や定期の掃除で消える）
+tmp_warned=0
+if [ -n "$route_tmp" ]; then
+  tmp_warned=1
+  echo "== 注意: フックの置き場所（${hooks}）が、他人が書き込める ${route_tmp} の下にあります。消えると他人に作り直され、そこに置かれたフックが push のたびにあなたの権限で動くことがあります。ホームの下に置くことを勧めます" >&2
 fi
 if [ -e "$hooks" ] && [ ! -O "$hooks" ]; then
   echo "フックの置き場所（${hooks}）が自分の持ち物ではありません。自分の持ち物の場所に core.hooksPath を設定し直してから実行してください。" >&2
@@ -252,13 +280,16 @@ fi
 # 置き場所を先に作り、作った後の持ち主と権限を確かめる（止まるときに、スキルや設定を書き換えずに済むように）
 if [ ! -e "$hooks" ]; then
   ( umask 022; mkdir -p "$hooks" ) || { echo "フックの置き場所（${hooks}）を作れません。権限を確かめてください。" >&2; exit 1; }
-  problem=""
   # 確かめてから作るまでの間に、他人が途中を先に作っていないか
-  if problem="$(unsafe_route "$hooks")" || unsafe_path "$hooks"; then
-    echo "== 失敗: 作ったフックの置き場所（${hooks}）か途中の持ち主・権限が想定と違います（${problem:-置き場所}）。ほかは書き換えていません" >&2
+  if unsafe_route "$hooks" || unsafe_path "$hooks"; then
+    echo "== 失敗: 作ったフックの置き場所（${hooks}）か途中の持ち主・権限が想定と違います（${route_problem:-置き場所}）。ほかは書き換えていません" >&2
     exit 1
   fi
   echo "  フックの置き場所を作りました: ${hooks}"
+  # 作る前は、まだ無い部分の先（リンクの中の .. など）までたどれないことがある
+  if [ -n "$route_tmp" ] && [ "$tmp_warned" -eq 0 ]; then
+    echo "== 注意: 作ったフックの置き場所（${hooks}）は、他人が書き込める ${route_tmp} を通ります。消えると他人に作り直され、そこに置かれたフックが push のたびにあなたの権限で動くことがあります。ホームの下に置くことを勧めます" >&2
+  fi
 fi
 if [ ! -w "$hooks" ] || [ ! -x "$hooks" ]; then
   echo "フックの置き場所（${hooks}）に書き込めません。権限を確かめてから実行してください。" >&2
@@ -277,7 +308,7 @@ echo "== スキルの導入"
 if [ $hook_only -eq 1 ]; then
   echo "  入れません（--hook-only）。フックの案内文には ${src} の場所を書きます"
   inside_dst=0
-  if real_dst="$(cd "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ]; then
+  if real_dst="$(cd -P "$dst" 2>/dev/null && pwd -P)" && [ -n "$real_dst" ]; then
     # 導入先の実体がこのスキルそのもの（リンクで入れた後）なら、2 つ読み込まれるので知らせる
     if [ "$real_dst" != "$src" ]; then case "$src/" in "$real_dst"/*) inside_dst=1 ;; esac; fi
   fi
@@ -287,7 +318,7 @@ if [ $hook_only -eq 1 ]; then
 else
 ( umask 022; mkdir -p "$skills" )   # umask 002 でも、グループがスキルを仕込める置き場所を作らない
 same=0
-if [ $copy -eq 0 ] && [ -L "$dst" ] && [ "$(cd "$dst" && pwd -P)" = "$(cd "$src" && pwd -P)" ]; then same=1; fi
+if [ $copy -eq 0 ] && [ -L "$dst" ] && [ "$(cd -P "$dst" && pwd -P)" = "$(cd -P "$src" && pwd -P)" ]; then same=1; fi
 if [ $copy -eq 1 ] && [ -d "$dst" ] && [ ! -L "$dst" ] && diff -rq "$src" "$dst" >/dev/null 2>&1; then same=1; fi
 if [ $same -eq 1 ]; then
   echo "  導入済み（変更なし）: ${dst}"
