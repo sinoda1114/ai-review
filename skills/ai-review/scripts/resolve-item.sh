@@ -63,9 +63,10 @@ fi
 # 値は --x=値 の形で渡す（- で始まる理由・メモを argparse がオプションと取り違えないように）
 set -- resolve --latest "$f" --head="$(git rev-parse HEAD)" --id="$id" --action="$action" --reason="$reason" --note="$note"
 [ -n "$verdict" ] && set -- "$@" --verdict "$verdict"
-tmp="$f.tmp.$$"
+tmp="$(mktemp "$(dirname "$f")/latest.json.tmp.XXXXXX")" || exit 1
 if ! "$py" -I "$here/gate.py" "$@" > "$tmp"; then
   rm -f "$tmp"; exit 1
 fi
 mv "$tmp" "$f"
+record_compat_copy "$f"   # 入っているフックが古い版なら、知らせて古い場所にも写しを置く
 "$py" -I "$here/gate.py" resolve --latest "$f" --list

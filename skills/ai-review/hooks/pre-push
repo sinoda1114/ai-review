@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ai-review-managed-hook
+# ai-review-record: git-dir
 # /ai-review v3 pre-push ゲート（ブロック型）
 #
 # 記録（作業ツリーごとの git のディレクトリの中の ai-review/latest.json）を検査し、以下なら push を拒否する:

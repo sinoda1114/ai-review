@@ -17,6 +17,23 @@ record_file() {
   printf '%s/ai-review/latest.json\n' "$gd"
 }
 
+# record_compat_copy <記録>: 入っている pre-push フックが古い版（記録を作業ツリーの .review-reports から読む）なら、
+#   知らせて、入れ直すまでの間だけ古い場所にも写しを置く。スキルはリンクで入っていてすぐ新しくなるが、フックは写しなので、
+#   入れ直すまで古い版のまま残る（写しを置かないと push が必ず止まる）。新しい版のフックは古い場所を読まないので、守りは弱まらない
+record_compat_copy() {
+  local rec="$1" top hp hk t
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  hp="$(git config --includes --get core.hooksPath 2>/dev/null)"; hp="${hp/#\~/$HOME}"
+  [ -n "$hp" ] || hp="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks"
+  case "$hp" in /*) ;; *) hp="$top/$hp" ;; esac
+  hk="$hp/pre-push"
+  { [ -f "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; } || return 0
+  echo "注意: 入っている pre-push フック（${hk}）は古い版で、記録を作業ツリーの .review-reports から読みます。install.sh を実行し直してください（それまでの間だけ、古い場所にも記録の写しを置きます）" >&2
+  mkdir -p "$top/.review-reports" 2>/dev/null || return 0
+  t="$(mktemp "$top/.review-reports/latest.json.tmp.XXXXXX")" || return 0
+  cp "$rec" "$t" && mv -f "$t" "$top/.review-reports/latest.json"
+}
+
 # reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）
 reports_unreadable() {
   if ! git -C "$1" rev-parse -q --verify "$2" >/dev/null 2>&1; then
