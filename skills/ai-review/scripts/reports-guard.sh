@@ -18,8 +18,8 @@ record_file() {
 }
 
 # warn_old_hook: 入っている pre-push フックが古い版（記録を作業ツリーの .review-reports から読む）なら、
-#   push が止まることと入れ直しの手順を知らせ、古い場所に残った記録を消す。古い場所に写しは置かない
-#   （置くと、作業ツリーに仕込んだ偽の記録で古いフックを通せる抜け道が残る。古いフックのままでは止める方に倒す）
+#   ゲートが正しく働かないことと入れ直しの手順を知らせ、古い場所に残った記録を消す。古い場所に写しは置かない
+#   （置くと、作業ツリーに仕込んだ偽の記録で古いフックを通せる抜け道が残る）
 warn_old_hook() {
   local top hp hk old=""
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
@@ -28,17 +28,13 @@ warn_old_hook() {
   case "$hp" in /*) ;; *) hp="$top/$hp" ;; esac
   # 効いているフックと、新しいフックが通した後に呼び継ぐリポジトリのフック（.git/hooks/pre-push）の両方を見る
   for hk in "$hp/pre-push" "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks/pre-push"; do
-    if [ -f "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; then old="$hk"; break; fi
+    if [ -f "$hk" ] && [ -x "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; then old="$hk"; break; fi
   done
   [ -n "$old" ] || return 0
-  if [ "$old" = "$hp/pre-push" ]; then
-    local how="install.sh を実行し直してください"
-    [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] || how="${old} をスキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
-    echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。入れ直すまでゲートは効いていません（記録が無ければ push は止まりますが、作業ツリーに記録が置かれると通ります）。${how}" >&2
-  else
-    # 効いているフックは新しい版で、通した後に呼び継ぐ先だけが古い版。古いフックは古い場所の記録が無いので、いつも止める
-    echo "注意: 呼び継ぐ先の pre-push フック（${old}）が古い版で、記録を作業ツリーの .review-reports から読むので、push をいつも止めます。${old} を消すか、スキルの hooks/pre-push で置き換えてください" >&2
-  fi
+  # 動きを断言しない（どう振る舞うかは、ほかに入っているフックとの組み合わせで変わる）
+  local how="${old} を消すか、スキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
+  [ "$old" = "$hp/pre-push" ] && [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] && how="install.sh を実行し直してください"
+  echo "注意: 古い版の pre-push フック（${old}）が入っています。記録を作業ツリーの .review-reports から読む版なので、ゲートが正しく働きません。${how}" >&2
   # .review-reports がリンクなら、リンク先のファイルを消さない（呼び出し元の検査に頼らない）
   [ -L "$top/.review-reports" ] && return 0
   # 古い場所に残った記録（偽の記録かもしれない）を、古いフックに信用させない

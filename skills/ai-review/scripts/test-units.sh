@@ -154,7 +154,7 @@ printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest
 git -C "$T/r12" config core.hooksPath "$T/r12hooks"
 gd12="$(git -C "$T/r12" rev-parse --absolute-git-dir)"; mkdir -p "$gd12/ai-review"; rec_json "$(git -C "$T/r12" rev-parse HEAD)" > "$gd12/ai-review/latest.json"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12.err"
-[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q 'install.sh' "$T/r12.err" && grep -q 'ゲートは効いていません' "$T/r12.err" && ok "古い版のフックなら、写しを置かずに、push が止まることと入れ直しを知らせる" || ng "写し・案内: $(cat "$T/r12.err")"
+[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q 'install.sh' "$T/r12.err" && grep -q '正しく働きません' "$T/r12.err" && ok "古い版のフックなら、写しを置かずに、ゲートが働かないことと入れ直しを知らせる" || ng "写し・案内: $(cat "$T/r12.err")"
 # 古い場所に残っていた記録（偽の記録かもしれない）は、古いフックに信用させないよう消す
 mkdir -p "$T/r12/.review-reports"; rec_json "$(git -C "$T/r12" rev-parse HEAD)" > "$T/r12/.review-reports/latest.json"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> /dev/null
@@ -165,13 +165,17 @@ cp "$HOOK" "$T/r12hooks/pre-push"
 # 呼び継ぐ先（リポジトリの .git/hooks/pre-push）が古い版でも、知らせる
 printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest.json"\n' > "$T/r12/.git/hooks/pre-push"; chmod +x "$T/r12/.git/hooks/pre-push"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12c.err"
-[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q '呼び継ぐ' "$T/r12c.err" && grep -q '止めます' "$T/r12c.err" && ! grep -q 'ゲートは効いていません' "$T/r12c.err" && ok "呼び継ぐ先だけが古い版なら、いつも止まると知らせる（写しは置かない）" || ng "呼び継ぐ先: $(cat "$T/r12c.err")"
+[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q '正しく働きません' "$T/r12c.err" && grep -q '置き換えて' "$T/r12c.err" && ok "呼び継ぐ先だけが古い版でも、置き換えを知らせる（写しは置かない）"
+# 実行権の無い古いフックは動かないので、知らせない
+chmod -x "$T/r12/.git/hooks/pre-push"
+( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12f.err"
+[ ! -s "$T/r12f.err" ] && ok "実行権の無い古いフックは知らせない" || ng "動かないフックを知らせた: $(cat "$T/r12f.err")"
+chmod +x "$T/r12/.git/hooks/pre-push" || ng "呼び継ぐ先: $(cat "$T/r12c.err")"
 # 古い場所の記録を消せなければ、黙らずに知らせる
-mkdir -p "$T/r12/.review-reports"; rec_json x > "$T/r12/.review-reports/latest.json"; chmod 555 "$T/r12/.review-reports"
+mkdir -p "$T/r12/.review-reports/latest.json"   # ディレクトリは rm -f で消えない（root でも同じ）
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12e.err"
-chmod 755 "$T/r12/.review-reports"
 grep -q '消せませんでした' "$T/r12e.err" && ok "古い場所の記録を消せなければ知らせる" || ng "消せなかったのに黙った: $(cat "$T/r12e.err")"
-rm -f "$T/r12/.review-reports/latest.json"
+rm -rf "$T/r12/.review-reports/latest.json"
 # .review-reports がシンボリックリンクなら、リンク先の記録を消さない
 rm -rf "$T/r12/.review-reports"; mkdir -p "$T/r12link"; rec_json x > "$T/r12link/latest.json"; ln -s "$T/r12link" "$T/r12/.review-reports"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> /dev/null
