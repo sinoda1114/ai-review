@@ -31,7 +31,9 @@ record_compat_copy() {
     if [ -f "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; then old="$hk"; break; fi
   done
   [ -n "$old" ] || return 0
-  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。install.sh を実行し直してください（それまでの間だけ、古い場所にも記録の写しを置きます）" >&2
+  local how="install.sh を実行し直してください"
+  [ "$old" = "$hp/pre-push" ] && [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] || how="${old} を消すか、スキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
+  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。${how}。入れ直すまでの間だけ、古い場所にも記録の写しを置きます（その間は、作業ツリーに残った偽の記録で push が通りうる）" >&2
   # 先に古い場所の記録を消す（写しに失敗しても、前の記録を古いフックに信用させない）
   rm -f "$top/.review-reports/latest.json" 2>/dev/null
   if [ ! -e "$top/.review-reports/latest.json" ] && [ ! -L "$top/.review-reports/latest.json" ] && mkdir -p "$top/.review-reports" 2>/dev/null && t="$(mktemp "$top/.review-reports/latest.json.tmp.XXXXXX")"; then
