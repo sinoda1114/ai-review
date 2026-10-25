@@ -116,7 +116,7 @@ unsafe_dir() {  # 親として危ないなら真。本人か root の持ち物�
 }
 unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リンクは中身を展開して続ける。カーネルがパスを解決する順と同じ）。
                   # 通るディレクトリが危ないか、リンクの持ち主が本人・root でなければ、その場所と理由を route_problem に入れて真。
-                  # 通った /tmp の形の場所は route_tmp に残す（実体のパスだけを見ると、/tmp に置いたリンクを見落とす）
+                  # /tmp の形の場所の中で名前を引いたら、その場所を route_tmp に残す（実体のパスだけを見ると、/tmp に置いたリンクを見落とす）
   local cur=/ rest="$1" comp next target hops=0 uid
   route_problem=""; route_tmp=""
   if unsafe_dir /; then route_problem="/（持ち主か権限）"; return 0; fi
@@ -125,12 +125,11 @@ unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リ
     if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
     case "$comp" in
       ""|.) continue ;;
-      ..) cur="$(dirname "$cur")"
-          # .. で /tmp の形の場所から出たら、その下ではなくなる
-          if [ -n "$route_tmp" ]; then case "$cur/" in "$route_tmp"/*) ;; *) route_tmp="" ;; esac; fi
-          continue ;;
+      ..) cur="$(dirname "$cur")"; continue ;;   # .. は名前を引かないので、他人に差し替えられない
     esac
     next="${cur%/}/$comp"
+    # /tmp の形の場所で名前を引くと、その名前（ディレクトリでもリンクでも）は、消えた後に他人に作り直されうる
+    if is_system_tmp "$cur" && writable_by_others "$cur"; then route_tmp="$cur"; fi
     if [ -L "$next" ]; then
       hops=$((hops + 1))
       [ $hops -le 40 ] || { route_problem="${next}（リンクが多すぎます）"; return 0; }
@@ -143,7 +142,6 @@ unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リ
     fi
     [ -e "$next" ] || return 1   # ここから先はまだ無い（umask 022 で作る）
     [ -d "$next" ] || { route_problem="${next}（ディレクトリではありません）"; return 0; }
-    if is_system_tmp "$next" && writable_by_others "$next"; then route_tmp="$next"; fi
     if unsafe_dir "$next"; then route_problem="${next}（持ち主か権限）"; return 0; fi
     cur="$next"
   done
