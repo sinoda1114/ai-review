@@ -8,6 +8,15 @@
 #   grep -q は途中で読むのをやめ、pipefail の下で上流が SIGPIPE で失敗扱いになるので、-c で最後まで読む。
 #   既知の限界: ファイルシステムの上での別名（同じ実体になる綴りの違う名前）の確認は、索引と作業ツリーだけで行う
 #   （チェックアウトしていないコミットのツリーの名前は、ファイルシステムで比べられない）。
+# record_file [<リポジトリの中のパス>]: ゲートが信用する記録（latest.json）の場所。作業ツリーごとの git のディレクトリの中
+#   （.git/ai-review/latest.json。作業ツリーの別のディレクトリなら .git/worktrees/<名前>/ai-review/latest.json）。
+#   チェックアウトや reset では作れない場所に置く（作業ツリーの .review-reports だと、祖先のコミットに仕込んだ偽の記録が
+#   reset の後に追跡されないファイルとして残り、それでゲートを通せた）。レビューの出力（run-*）は .review-reports に置く。
+record_file() {
+  local gd; gd="$(git -C "${1:-.}" rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$gd" ] || return 1
+  printf '%s/ai-review/latest.json\n' "$gd"
+}
+
 # reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）
 reports_unreadable() {
   if ! git -C "$1" rev-parse -q --verify "$2" >/dev/null 2>&1; then

@@ -136,5 +136,16 @@ printf '100644 %s\t-\377\n100644 %s\t.review-reports/latest.json\n' "$bl" "$bl" 
 # 一時ファイルの名前は予測できない
 ! grep -q '".tmp"' "$RR" && grep -q 'mkstemp' "$RR" && ok "run-reviews.sh の一時ファイルは mkstemp で作る" || ng "予測できる .tmp が残っている"
 
+echo "5. 記録の置き場所（.git の中）"
+rec_json(){ printf '{"version": 3, "head_sha": "%s", "branch": "main", "mode": "branch", "verdict": "pass", "scope": "full", "full_count": 1, "escalate": false, "escalation_done": false, "skipped_by_user": false}\n' "$1"; }
+mkrepo "$T/r11"; h11="$(git -C "$T/r11" rev-parse HEAD)"
+mkdir -p "$T/r11/.review-reports"; rec_json "$h11" > "$T/r11/.review-reports/latest.json"   # 作業ツリーにだけある記録（チェックアウトや reset で作れる）
+(cd "$T/r11" && printf 'refs/heads/main %s refs/heads/main %s\n' "$h11" $zero | bash "$HOOK" origin x > "$T/r11.out" 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q '置き場所' "$T/r11.out" && ok "作業ツリーにだけある記録では通さず、置き場所が変わったと知らせる" || ng "rc=$rc $(head -1 "$T/r11.out")"
+gd11="$(git -C "$T/r11" rev-parse --absolute-git-dir)"; mkdir -p "$gd11/ai-review"; rec_json "$h11" > "$gd11/ai-review/latest.json"
+(cd "$T/r11" && printf 'refs/heads/main %s refs/heads/main %s\n' "$h11" $zero | bash "$HOOK" origin x > "$T/r11b.out" 2>&1); rc=$?
+[ $rc -eq 0 ] && ok ".git の中の記録で通す" || ng "rc=$rc $(head -2 "$T/r11b.out")"
+( . "$here/reports-guard.sh"; [ "$(record_file "$T/r11")" = "$gd11/ai-review/latest.json" ] ) && ok "record_file は作業ツリーごとの .git の中を指す" || ng "record_file"
+
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]

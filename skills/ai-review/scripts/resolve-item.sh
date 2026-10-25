@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # /ai-review v3 MUST-ADDRESS の 1 件を処理した記録（C 案。DESIGN-v3.md §6）
 #
-# 使い方（リポジトリ内のどこからでも。書き先はルートの .review-reports/latest.json）:
+# 使い方（リポジトリ内のどこからでも。書き先は作業ツリーごとの git のディレクトリの中の ai-review/latest.json）:
 #   resolve-item.sh --list
 #   resolve-item.sh --id <ID> --fixed [--note "<何を直したか>"]
 #       直した。commit して /ai-review を再実行するまで push は通らない（再実行で「再レビュー済み」として引き継ぐ）
@@ -48,8 +48,8 @@ guard_reports_dir() {
   fi
 }
 guard_reports_dir "$(pwd)"
-f=".review-reports/latest.json"
-[ -f "$f" ] || { echo "$f がありません。先に /ai-review を実行してください" >&2; exit 1; }
+f="$(record_file)" || { echo "git のディレクトリを確かめられません" >&2; exit 1; }
+[ -f "$f" ] || { echo "記録（$f）がありません。先に /ai-review を実行してください" >&2; exit 1; }
 
 if [ $list -eq 1 ]; then
   exec "$py" -I "$here/gate.py" resolve --latest "$f" --list
