@@ -17,6 +17,31 @@ record_file() {
   printf '%s/ai-review/latest.json\n' "$gd"
 }
 
+# abs_git_path <リポジトリの中のディレクトリ> <rev-parse の引数...>: git が返すパスを絶対パスにする
+#   （絶対パスで返させる書式の指定は git 2.31 より前に無いので使わない。相対パスは -C のディレクトリから解く）
+abs_git_path() {
+  local d="$1" p; shift
+  p="$(git -C "$d" rev-parse "$@" 2>/dev/null)" && [ -n "$p" ] || return 1
+  case "$p" in /*) ;; *) p="$(cd "$d" 2>/dev/null && pwd)/$p" ;; esac
+  printf '%s\n' "$p"
+}
+
+# hooks_dir [<リポジトリの中のディレクトリ>]: 効いている pre-push の置き場所。core.hooksPath（~ や ~user は git 自身に
+#   展開させ、相対パスは作業ツリーのルートから解く）か、無ければ共通の git のディレクトリの hooks
+hooks_dir() {
+  local d="${1:-.}" hp top
+  hp="$(git -C "$d" config --type=path --includes --get core.hooksPath 2>/dev/null)"
+  if [ -z "$hp" ]; then
+    hp="$(abs_git_path "$d" --git-common-dir)" || return 1
+    printf '%s/hooks\n' "$hp"; return 0
+  fi
+  case "$hp" in
+    /*) ;;
+    *) top="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null)" || top="$(cd "$d" && pwd)"; hp="$top/$hp" ;;
+  esac
+  printf '%s\n' "$hp"
+}
+
 # warn_old_hook: 記録を書いた後に呼ぶ。古い場所（作業ツリーの .review-reports/latest.json）に残った記録を消し、
 #   古い版の ai-review のフック（記録をそこから読む）があれば置き換えを知らせる。古い場所に写しは置かない
 #   （置くと、作業ツリーに仕込んだ偽の記録で古いフックを通せる抜け道が残る）。どう振る舞うかはほかのフックとの
@@ -24,11 +49,9 @@ record_file() {
 warn_old_hook() {
   local top hp hk
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  hp="$(git config --type=path --includes --get core.hooksPath 2>/dev/null)"   # ~ や ~user は git 自身に展開させる
-  [ -n "$hp" ] || hp="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks"
-  case "$hp" in /*) ;; *) hp="$top/$hp" ;; esac
+  hp="$(hooks_dir)" || hp=""
   # 効いている置き場所と、リポジトリのフック（呼び継がれうる）の両方を見る。実行権は問わない（後で付けると効きはじめる）
-  for hk in "$hp/pre-push" "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks/pre-push"; do
+  for hk in ${hp:+"$hp/pre-push"} "$(abs_git_path . --git-common-dir)/hooks/pre-push"; do
     if [ -f "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; then
       echo "注意: 古い版の pre-push フック（${hk}）があります。記録を作業ツリーの .review-reports から読む版なので、ゲートが正しく働きません。スキルの hooks/pre-push で置き換えてください（グローバルの置き場所のフックなら、install.sh の実行し直しでも置き換わります）" >&2
       break
@@ -50,18 +73,20 @@ reports_unreadable() {
     # 「まだ無い」と見なすのは、生まれる前のブランチ（HEAD が指す ref のファイルが無い）だけ。ref のファイルが
     # あるのに解決できないとき（壊れている）や、HEAD が ref を指していないときは、読めないものとして信用しない
     local ref; ref="$(git -C "$1" symbolic-ref -q "$2" 2>/dev/null)" || return 0
-    [ -e "$(git -C "$1" rev-parse --path-format=absolute --git-path "$ref" 2>/dev/null)" ] && return 0
+    [ -e "$(abs_git_path "$1" --git-path "$ref")" ] && return 0
     git -C "$1" for-each-ref --format='%(refname)' "$ref" 2>/dev/null | grep -qxF "$ref" && return 0   # packed-refs にある
     return 1
   fi
-  git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1 || return 0   # 指す先はあるのに、コミットを読めない
-  ! git -C "$1" ls-tree -r --name-only "$2" >/dev/null 2>&1
+  ! git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1   # 指す先はあるのに、コミットを読めない
 }
 # reports_untrusted が 0 を返したときの理由: link（シンボリックリンク）・tracked（追跡されている）・unreadable（読めない）
 REPORTS_WHY=""
 # reports_untrusted_message: 理由に合った文言を標準エラーに出す
 reports_untrusted_message() {
-  if [ "$REPORTS_WHY" = "unreadable" ]; then
+  if [ "$REPORTS_WHY" = "index" ]; then
+    echo "索引（.git/index）を読めません。.review-reports が追跡されていないかを確かめられないので、レビューの出力を書けません。" >&2
+    echo "索引が壊れていないかを確かめてください（git status でエラーが出ないか）。" >&2
+  elif [ "$REPORTS_WHY" = "unreadable" ]; then
     echo "コミットのツリーを読めません。.review-reports が含まれていないかを確かめられないので、レビューの出力を書けません。" >&2
     echo "リポジトリが壊れていないか（git fsck）、遅延取得のオブジェクトが取れるかを確かめてください。" >&2
   else
@@ -73,8 +98,8 @@ reports_untrusted() {
   # 言語設定に左右されない（UTF-8 として不正なバイトの名前で、tr などが途中で止まって検査を素通りしない）
   local -x LC_ALL=C
   local top="$1"; shift
-  git -C "$top" ls-files -z >/dev/null 2>&1 || { REPORTS_WHY=unreadable; return 0; }   # 索引を読めなければ信用しない
-  local pat='(^|/)\.review-reports(/|$)' c
+  git -C "$top" ls-files -z >/dev/null 2>&1 || { REPORTS_WHY=index; return 0; }   # 索引を読めなければ信用しない
+  local pat='(^|/)\.review-reports(/|$)' c n
   REPORTS_WHY=link; [ -L "$top/.review-reports" ] && return 0
   REPORTS_WHY=tracked; [ "$(git -C "$top" ls-files -z 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
   # 綴りは違っても、ファイルシステムの上で .review-reports と同じ実体になる名前（大文字小文字・Unicode の同一視）で
@@ -86,8 +111,11 @@ reports_untrusted() {
   [ $# -gt 0 ] || set -- HEAD
   for c in "$@"; do
     reports_unreadable "$top" "$c" && { REPORTS_WHY=unreadable; return 0; }
+    # ツリーは 1 回だけ読む。読めなければ（git が失敗したら）信用しない
+    n="$(git -C "$top" ls-tree -r -z --name-only "$c" 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat"; echo " ${PIPESTATUS[0]}")"
+    [ "${n##* }" = "0" ] || { REPORTS_WHY=unreadable; return 0; }
     REPORTS_WHY=tracked
-    [ "$(git -C "$top" ls-tree -r -z --name-only "$c" 2>/dev/null | tr '\0' '\n' | grep -ciE "$pat")" != "0" ] && return 0
+    [ "${n%%[!0-9]*}" != "0" ] && return 0
   done
   return 1
 }
