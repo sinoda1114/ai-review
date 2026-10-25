@@ -341,7 +341,7 @@ if [ -e "$hooks/pre-push" ] && [ ! -L "$hooks/pre-push" ] && cmp -s "$new" "$hoo
   echo "  導入済み（変更なし）: ${hooks}/pre-push"
 else
   # 同じディレクトリに書いてから mv で置き換える（既存のフックがリンクでも、リンク先を書き換えない）
-  tmp_hook="$(mktemp "$hooks/.pre-push.new.XXXXXX")"; cp "$new" "$tmp_hook"; chmod +x "$tmp_hook"
+  tmp_hook="$(mktemp "$hooks/.pre-push.new.XXXXXX")"; cp "$new" "$tmp_hook"; chmod 755 "$tmp_hook"
   # rename(2) で 1 回で置き換える。リンクは退避済みで、リンク自身を置き換える（mv はディレクトリへのリンクだとその中へ移す）
   (cd / && python3 -I -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$tmp_hook" "$hooks/pre-push"); tmp_hook=""
   echo "  入れました: ${hooks}/pre-push"
