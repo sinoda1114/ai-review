@@ -21,17 +21,25 @@ record_file() {
 #   知らせて、入れ直すまでの間だけ古い場所にも写しを置く。スキルはリンクで入っていてすぐ新しくなるが、フックは写しなので、
 #   入れ直すまで古い版のまま残る（写しを置かないと push が必ず止まる）。新しい版のフックは古い場所を読まないので、守りは弱まらない
 record_compat_copy() {
-  local rec="$1" top hp hk t
+  local rec="$1" top hp hk t old=""
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  hp="$(git config --includes --get core.hooksPath 2>/dev/null)"; hp="${hp/#\~/$HOME}"
+  hp="$(git config --type=path --includes --get core.hooksPath 2>/dev/null)"   # ~ や ~user は git 自身に展開させる
   [ -n "$hp" ] || hp="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks"
   case "$hp" in /*) ;; *) hp="$top/$hp" ;; esac
-  hk="$hp/pre-push"
-  { [ -f "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; } || return 0
-  echo "注意: 入っている pre-push フック（${hk}）は古い版で、記録を作業ツリーの .review-reports から読みます。install.sh を実行し直してください（それまでの間だけ、古い場所にも記録の写しを置きます）" >&2
-  mkdir -p "$top/.review-reports" 2>/dev/null || return 0
-  t="$(mktemp "$top/.review-reports/latest.json.tmp.XXXXXX")" || return 0
-  cp "$rec" "$t" && mv -f "$t" "$top/.review-reports/latest.json"
+  # 効いているフックと、新しいフックが通した後に呼び継ぐリポジトリのフック（.git/hooks/pre-push）の両方を見る
+  for hk in "$hp/pre-push" "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks/pre-push"; do
+    if [ -f "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; then old="$hk"; break; fi
+  done
+  [ -n "$old" ] || return 0
+  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。install.sh を実行し直してください（それまでの間だけ、古い場所にも記録の写しを置きます）" >&2
+  # 先に古い場所の記録を消す（写しに失敗しても、前の記録を古いフックに信用させない）
+  rm -f "$top/.review-reports/latest.json"
+  if mkdir -p "$top/.review-reports" 2>/dev/null && t="$(mktemp "$top/.review-reports/latest.json.tmp.XXXXXX")"; then
+    cp "$rec" "$t" && mv -f "$t" "$top/.review-reports/latest.json" && return 0
+    rm -f "$t"
+  fi
+  echo "注意: 古い場所に記録の写しを置けませんでした（古い版のフックでは push が止まります。install.sh を実行し直してください）" >&2
+  return 1
 }
 
 # reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）

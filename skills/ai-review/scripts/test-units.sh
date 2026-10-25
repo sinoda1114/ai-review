@@ -157,6 +157,10 @@ gd12="$(git -C "$T/r12" rev-parse --absolute-git-dir)"; mkdir -p "$gd12/ai-revie
 cp "$HOOK" "$T/r12hooks/pre-push"; rm -f "$T/r12/.review-reports/latest.json"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; record_compat_copy "$gd12/ai-review/latest.json" ) 2> "$T/r12b.err"
 [ ! -f "$T/r12/.review-reports/latest.json" ] && [ ! -s "$T/r12b.err" ] && ok "新しい版のフックなら写しを置かない" || ng "新しい版で写しを置いた"
+# 呼び継ぐ先（リポジトリの .git/hooks/pre-push）が古い版でも、写しを置く
+printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest.json"\n' > "$T/r12/.git/hooks/pre-push"; chmod +x "$T/r12/.git/hooks/pre-push"
+( cd "$T/r12" && . "$here/reports-guard.sh"; record_compat_copy "$gd12/ai-review/latest.json" ) 2> "$T/r12c.err"
+[ -f "$T/r12/.review-reports/latest.json" ] && ok "呼び継ぐ先が古い版でも、写しを置く" || ng "呼び継ぐ先の古い版を見落とした: $(cat "$T/r12c.err")"
 grep -q '# ai-review-record: git-dir' "$HOOK" && ok "フックに版の目印がある" || ng "フックに版の目印が無い"
 ! grep -q 'tmp="\$f.tmp.\$\$"' "$here/resolve-item.sh" && ok "resolve-item.sh の一時ファイルは mktemp で作る" || ng "予測できる一時ファイル名が残っている"
 
