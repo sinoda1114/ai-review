@@ -17,16 +17,18 @@ record_file() {
   printf '%s/ai-review/latest.json\n' "$gd"
 }
 
-# abs_git_path <リポジトリの中のディレクトリ> <rev-parse の引数...>: git が返すパスを絶対パスにする
-#   （絶対パスで返させる書式の指定は git 2.31 より前に無いので使わない。相対パスは -C のディレクトリから解く）
-# win_abs <パス>: Windows の絶対パス（C:/・C:\・\\server）なら区切りを / にそろえて出し、0 を返す
+# win_abs <パス>: Windows（Git for Windows・MSYS・Cygwin）で動いていて、Windows の絶対パス（C:/・C:\・\\server）なら
+#   区切りを / にそろえて出し、0 を返す。それ以外の OS では、c: という名前のディレクトリの下の相対パスなので 1
 win_abs() {
+  case "$(uname -s 2>/dev/null)" in MINGW* | MSYS* | CYGWIN*) ;; *) return 1 ;; esac
   case "$1" in
     [A-Za-z]:[/\\]* | '\\'*) printf '%s\n' "$1" | tr '\\' '/'; return 0 ;;
   esac
   return 1
 }
 
+# abs_git_path <リポジトリの中のディレクトリ> <rev-parse の引数...>: git が返すパスを絶対パスにする
+#   （絶対パスで返させる書式の指定は git 2.31 より前に無いので使わない。相対パスは -C のディレクトリから解く）
 abs_git_path() {
   local d="$1" p; shift
   p="$(git -C "$d" rev-parse "$@" 2>/dev/null)" && [ -n "$p" ] || return 1

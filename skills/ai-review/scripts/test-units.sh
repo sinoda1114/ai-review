@@ -286,7 +286,7 @@ mkrepo "$T/r14r"; git -C "$T/r14r" config core.hooksPath "$T/r14rhooks"
 echo "15. Issue #16"
 # Git for Windows が返す C:/ 形式の絶対パスを、相対パスと取り違えない
 mkdir -p "$T/wingit"; realgit16="$(command -v git)"
-printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --git-common-dir ] && { echo "C:/repo/.git"; exit 0; }; done\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit/git"; chmod +x "$T/wingit/git"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --git-common-dir ] && { echo "C:/repo/.git"; exit 0; }; done\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit/git"; chmod +x "$T/wingit/git"; printf '#!/bin/sh\necho MINGW64_NT-10.0\n' > "$T/wingit/uname"; chmod +x "$T/wingit/uname"   # Git for Windows の環境のふり
 mkrepo "$T/r16a"
 ( PATH="$T/wingit:$PATH"; . "$here/reports-guard.sh"; [ "$(abs_git_path "$T/r16a" --git-common-dir)" = "C:/repo/.git" ] ) && ok "C:/ 形式のパスは絶対パスとして扱う" || ng "C:/ を相対パスと取り違えた: $(PATH="$T/wingit:$PATH"; . "$here/reports-guard.sh"; abs_git_path "$T/r16a" --git-common-dir)"
 # 予測できる名前の一時ファイル（$$ や固定の名前に書いてから mv する）を見つける検査。悪い例を見つけられることも確かめる
@@ -302,18 +302,21 @@ mkrepo "$T/r16b"; h16b="$(git -C "$T/r16b" rev-parse HEAD)"
 [ $rc -ne 0 ] && grep -q '移れません' "$T/r16b.out" && ok "pre-push はルートに移れなければ止める（動かして確かめる）" || ng "ルートに移れないのに: rc=$rc $(head -2 "$T/r16b.out")"
 # hooks_dir も C:/ 形式の core.hooksPath を絶対パスとして扱う
 mkdir -p "$T/wingit2"
-printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) echo "C:/Users/u/.git-hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit2/git"; chmod +x "$T/wingit2/git"
+printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) echo "C:/Users/u/.git-hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit2/git"; chmod +x "$T/wingit2/git"; printf '#!/bin/sh\necho MINGW64_NT-10.0\n' > "$T/wingit2/uname"; chmod +x "$T/wingit2/uname"   # Git for Windows の環境のふり
 ( cd "$T/r16a" && PATH="$T/wingit2:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "C:/Users/u/.git-hooks" ] ) && ok "hooks_dir も C:/ 形式を絶対パスとして扱う" || ng "hooks_dir が C:/ を相対パスと取り違えた: $(cd "$T/r16a" && PATH="$T/wingit2:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
 # 一時ファイルの検査は、対象のファイルが無ければ通さない
 ! tmp_ok "$T/no-such-file.sh" && ok "一時ファイルの検査は、対象のファイルが無ければ通さない" || ng "無いファイルを通した"
 # バックスラッシュ形式（C:\...）と UNC（\\server\...）も Windows の絶対パスとして扱い、区切りを / にそろえる
 mkdir -p "$T/wingit3"
-printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) printf "%%s\\n" "C:\\\\Users\\\\u\\\\hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit3/git"; chmod +x "$T/wingit3/git"
+printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) printf "%%s\\n" "C:\\\\Users\\\\u\\\\hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit3/git"; chmod +x "$T/wingit3/git"; printf '#!/bin/sh\necho MINGW64_NT-10.0\n' > "$T/wingit3/uname"; chmod +x "$T/wingit3/uname"   # Git for Windows の環境のふり
 ( cd "$T/r16a" && PATH="$T/wingit3:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "C:/Users/u/hooks" ] ) && ok "hooks_dir は C:\\ 形式も絶対パスとして扱う" || ng "C:\\ 形式: $(cd "$T/r16a" && PATH="$T/wingit3:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
 mkdir -p "$T/wingit4"
-printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) printf "%%s\\n" "\\\\\\\\srv\\\\share\\\\hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit4/git"; chmod +x "$T/wingit4/git"
+printf '#!/bin/sh\ncase " $* " in *" config "*hooksPath*) printf "%%s\\n" "\\\\\\\\srv\\\\share\\\\hooks"; exit 0 ;; esac\nexec "%s" "$@"\n' "$realgit16" > "$T/wingit4/git"; chmod +x "$T/wingit4/git"; printf '#!/bin/sh\necho MINGW64_NT-10.0\n' > "$T/wingit4/uname"; chmod +x "$T/wingit4/uname"   # Git for Windows の環境のふり
 ( cd "$T/r16a" && PATH="$T/wingit4:$PATH"; . "$here/reports-guard.sh"; [ "$(hooks_dir)" = "//srv/share/hooks" ] ) && ok "hooks_dir は UNC 形式も絶対パスとして扱う" || ng "UNC 形式: $(cd "$T/r16a" && PATH="$T/wingit4:$PATH"; . "$here/reports-guard.sh"; hooks_dir)"
 # 一時ファイルを作れないときは、escalation-check.sh の失敗と取り違えない文言で記録する
 grep -q '一時ファイルを作れない' "$RR" && ok "一時ファイルを作れないときは、その旨を記録する" || ng "一時ファイルを作れないときの記録が無い"
+# Windows でない環境では、C:/ の形は（c: という名前のディレクトリの下の）相対パスのまま扱う
+mkdir -p "$T/winpath-only"; printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = --git-common-dir ] && { echo "C:/repo/.git"; exit 0; }; done\nexec "%s" "$@"\n' "$realgit16" > "$T/winpath-only/git"; chmod +x "$T/winpath-only/git"
+( PATH="$T/winpath-only:$PATH"; . "$here/reports-guard.sh"; [ "$(abs_git_path "$T/r16a" --git-common-dir)" != "C:/repo/.git" ] ) && ok "Windows でなければ C:/ の形を絶対パスとみなさない" || ng "Windows でないのに C:/ を絶対パスとみなした"
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]
