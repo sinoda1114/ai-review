@@ -165,12 +165,27 @@ cp "$HOOK" "$T/r12hooks/pre-push"
 # 呼び継ぐ先（リポジトリの .git/hooks/pre-push）が古い版でも、知らせる
 printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest.json"\n' > "$T/r12/.git/hooks/pre-push"; chmod +x "$T/r12/.git/hooks/pre-push"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12c.err"
-[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q '正しく働きません' "$T/r12c.err" && grep -q '置き換えて' "$T/r12c.err" && ok "呼び継ぐ先だけが古い版でも、置き換えを知らせる（写しは置かない）"
+[ ! -e "$T/r12/.review-reports/latest.json" ] && grep -q '正しく働きません' "$T/r12c.err" && grep -q '置き換えて' "$T/r12c.err" && ok "呼び継ぐ先だけが古い版でも、置き換えを知らせる（写しは置かない）" || ng "呼び継ぐ先: $(cat "$T/r12c.err")"
 # 実行権の無い古いフックは動かないので、知らせない
 chmod -x "$T/r12/.git/hooks/pre-push"
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12f.err"
 [ ! -s "$T/r12f.err" ] && ok "実行権の無い古いフックは知らせない" || ng "動かないフックを知らせた: $(cat "$T/r12f.err")"
-chmod +x "$T/r12/.git/hooks/pre-push" || ng "呼び継ぐ先: $(cat "$T/r12c.err")"
+chmod +x "$T/r12/.git/hooks/pre-push"
+# 効いているフックが ai-review のものでなければ、呼び継ぐ先は動かないので知らせない
+mkdir -p "$T/r12other"; printf '#!/bin/sh\nexit 0\n' > "$T/r12other/pre-push"; chmod +x "$T/r12other/pre-push"
+git -C "$T/r12" config core.hooksPath "$T/r12other"
+( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12g.err"
+[ ! -s "$T/r12g.err" ] && ok "効いているフックが別物なら、呼び継ぐ先の古い版を知らせない" || ng "動かない呼び継ぐ先を知らせた: $(cat "$T/r12g.err")"
+# install.sh の案内は、効いているのがグローバルの置き場所のときだけ。そうでなければ置き換えを案内する
+git -C "$T/r12" config --unset core.hooksPath; rm -f "$T/r12/.git/hooks/pre-push"
+printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest.json"\n' > "$T/r12hooks/pre-push"; chmod +x "$T/r12hooks/pre-push"
+printf '[core]\n\thooksPath = %s\n' "$T/r12hooks" > "$T/r12global"
+( cd "$T/r12" && export GIT_CONFIG_GLOBAL="$T/r12global"; . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12h.err"
+grep -q 'install.sh を実行し直して' "$T/r12h.err" && ok "グローバルの置き場所の古いフックなら install.sh を案内する" || ng "グローバル: $(cat "$T/r12h.err")"
+printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest.json"\n' > "$T/r12/.git/hooks/pre-push"; chmod +x "$T/r12/.git/hooks/pre-push"
+( cd "$T/r12" && export GIT_CONFIG_GLOBAL="$T/r12empty"; . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12i.err"
+grep -q '置き換えて' "$T/r12i.err" && ! grep -q 'install.sh を実行し直して' "$T/r12i.err" && ok "hooksPath が無く .git/hooks の古いフックなら、install.sh ではなく置き換えを案内する" || ng ".git/hooks: $(cat "$T/r12i.err")"
+rm -f "$T/r12/.git/hooks/pre-push"; git -C "$T/r12" config core.hooksPath "$T/r12hooks"
 # 古い場所の記録を消せなければ、黙らずに知らせる
 mkdir -p "$T/r12/.review-reports/latest.json"   # ディレクトリは rm -f で消えない（root でも同じ）
 ( cd "$T/r12" && . "$here/reports-guard.sh"; warn_old_hook ) 2> "$T/r12e.err"

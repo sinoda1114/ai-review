@@ -20,20 +20,29 @@ record_file() {
 # warn_old_hook: 入っている pre-push フックが古い版（記録を作業ツリーの .review-reports から読む）なら、
 #   ゲートが正しく働かないことと入れ直しの手順を知らせ、古い場所に残った記録を消す。古い場所に写しは置かない
 #   （置くと、作業ツリーに仕込んだ偽の記録で古いフックを通せる抜け道が残る）
+# is_old_hook <パス>: 動く（実行権がある）ai-review の古い版のフックなら 0
+is_old_hook() {
+  [ -f "$1" ] && [ -x "$1" ] && grep -qxF '# ai-review-managed-hook' "$1" && ! grep -qxF '# ai-review-record: git-dir' "$1"
+}
+
 warn_old_hook() {
-  local top hp hk old=""
+  local top hp old=""
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
   hp="$(git config --type=path --includes --get core.hooksPath 2>/dev/null)"   # ~ や ~user は git 自身に展開させる
   [ -n "$hp" ] || hp="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks"
   case "$hp" in /*) ;; *) hp="$top/$hp" ;; esac
-  # 効いているフックと、新しいフックが通した後に呼び継ぐリポジトリのフック（.git/hooks/pre-push）の両方を見る
-  for hk in "$hp/pre-push" "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks/pre-push"; do
-    if [ -f "$hk" ] && [ -x "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; then old="$hk"; break; fi
-  done
+  # 効いているフックと、新しいフックが通した後に呼び継ぐリポジトリのフック（.git/hooks/pre-push）を見る。
+  # 呼び継ぐ先が動くのは、効いているフックが新しい版のときだけ。実行権の無いフックは git も新しいフックも動かさない
+  local chained="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks/pre-push"
+  if is_old_hook "$hp/pre-push"; then old="$hp/pre-push"
+  elif [ -x "$hp/pre-push" ] && grep -qxF '# ai-review-record: git-dir' "$hp/pre-push" && is_old_hook "$chained"; then old="$chained"
+  fi
   [ -n "$old" ] || return 0
-  # 動きを断言しない（どう振る舞うかは、ほかに入っているフックとの組み合わせで変わる）
+  # 動きを断言しない（どう振る舞うかは、ほかに入っているフックとの組み合わせで変わる）。
+  # install.sh が直せるのは、グローバルの core.hooksPath の置き場所のフックだけ
   local how="${old} を消すか、スキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
-  [ "$old" = "$hp/pre-push" ] && [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] && how="install.sh を実行し直してください"
+  local ghp; ghp="$(git config --global --type=path --includes --get core.hooksPath 2>/dev/null)"
+  [ -n "$ghp" ] && [ "$old" = "$hp/pre-push" ] && [ "$hp" -ef "$ghp" ] && how="install.sh を実行し直してください"
   echo "注意: 古い版の pre-push フック（${old}）が入っています。記録を作業ツリーの .review-reports から読む版なので、ゲートが正しく働きません。${how}" >&2
   # .review-reports がリンクなら、リンク先のファイルを消さない（呼び出し元の検査に頼らない）
   [ -L "$top/.review-reports" ] && return 0

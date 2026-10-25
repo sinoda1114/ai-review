@@ -68,5 +68,5 @@ if ! "$py" -I "$here/gate.py" "$@" > "$tmp"; then
   rm -f "$tmp"; exit 1
 fi
 mv "$tmp" "$f"
-warn_old_hook   # 入っているフックが古い版なら、push が止まることと入れ直しを知らせる
+warn_old_hook   # 古い版のフックが入っていれば、ゲートが正しく働かないことと入れ直しを知らせ、古い場所の記録を消す
 "$py" -I "$here/gate.py" resolve --latest "$f" --list
