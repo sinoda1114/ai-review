@@ -33,8 +33,8 @@ record_compat_copy() {
   [ -n "$old" ] || return 0
   echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。install.sh を実行し直してください（それまでの間だけ、古い場所にも記録の写しを置きます）" >&2
   # 先に古い場所の記録を消す（写しに失敗しても、前の記録を古いフックに信用させない）
-  rm -f "$top/.review-reports/latest.json"
-  if mkdir -p "$top/.review-reports" 2>/dev/null && t="$(mktemp "$top/.review-reports/latest.json.tmp.XXXXXX")"; then
+  rm -f "$top/.review-reports/latest.json" 2>/dev/null
+  if [ ! -e "$top/.review-reports/latest.json" ] && [ ! -L "$top/.review-reports/latest.json" ] && mkdir -p "$top/.review-reports" 2>/dev/null && t="$(mktemp "$top/.review-reports/latest.json.tmp.XXXXXX")"; then
     cp "$rec" "$t" && mv -f "$t" "$top/.review-reports/latest.json" && return 0
     rm -f "$t"
   fi
