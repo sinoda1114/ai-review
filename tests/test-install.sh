@@ -213,7 +213,7 @@ HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/o
 [ $rc -ne 0 ] && [ ! -e "$T/home23/shared/hooks/pre-push" ] && [ ! -e "$T/home23/.claude" ] && ok "グループが書き込める親の下には入れない" || ng "親の確認なし rc=$rc $(tail -2 "$T/out24")"
 chmod 1777 "$T/home23/shared"
 HOME="$T/home23" GIT_CONFIG_GLOBAL="$T/home23/.gitconfig" bash "$INSTALL" >"$T/out24" 2>&1; rc=$?
-if [ "$(id -u)" -eq 0 ]; then echo "  SKIP root の持ち物は /tmp の形として通す"
+if [ "$(id -u)" -eq 0 ]; then [ $rc -eq 0 ] && ok "root の持ち物のスティッキーな親は /tmp の形として通す" || ng "root の /tmp の形で止まった rc=$rc"
 else [ $rc -ne 0 ] && grep -q 'home23/shared（' "$T/out24" && ok "本人の持ち物でも、他人が書き込めるスティッキービット付きの親は止める（root の /tmp の形だけ通す）" || ng "本人のスティッキーの親を通した rc=$rc $(tail -2 "$T/out24")"; fi
 chmod 755 "$T/home23/shared"
 personal=0   # install.sh と同じ条件で、利用者の専用グループかを決める
@@ -404,6 +404,15 @@ if [ -k /tmp ] && [ "$(ls -ldn /tmp/ | awk '{print $3}')" = 0 ]; then
   HOME="$T/h51" GIT_CONFIG_GLOBAL="$T/h51/.gitconfig" bash "$INSTALL" >"$T/out54" 2>&1; rc=$?
   rm -rf "$tmpd"
   [ $rc -eq 0 ] && grep -q '作り直され' "$T/out54" && ok "/tmp に置いたリンクを通る置き場所にも注意を出す" || ng "/tmp のリンクで注意なし rc=$rc $(tail -2 "$T/out54")"
+  rm -rf "$T/h53"; mkdir -p "$T/h53"; ptmp="$(cd -P /tmp && pwd -P)"; ph53="$(cd -P "$T/h53" && pwd -P)"; pparent="$(dirname "$ptmp")"
+  case "$ph53" in
+    "$ptmp"/*) echo "  SKIP テストの場所が /tmp の下にある（注意が出るのが正しい）" ;;
+    "${pparent%/}"/*)
+      HOME="$T/h53" GIT_CONFIG_GLOBAL="$T/h53/.gitconfig" git config --global core.hooksPath "$ptmp/..${ph53#"${pparent%/}"}/.git-hooks"
+      HOME="$T/h53" GIT_CONFIG_GLOBAL="$T/h53/.gitconfig" bash "$INSTALL" >"$T/out56" 2>&1; rc=$?
+      [ $rc -eq 0 ] && ! grep -q '作り直され' "$T/out56" && ok "/tmp を通ってから .. で外に出るパスでは注意を出さない" || ng "/tmp/.. で注意が出た rc=$rc $(tail -2 "$T/out56")" ;;
+    *) echo "  SKIP テストの場所が /tmp の親の下にない" ;;
+  esac
 else echo "  SKIP /tmp が root のスティッキービット付きでない"; fi
 
 echo "4y7. まだ無い置き場所でも、リンク越しに同じ場所を指す上書きは止めない"

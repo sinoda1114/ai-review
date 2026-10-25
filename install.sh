@@ -123,7 +123,13 @@ unsafe_route() {  # 置き場所までを / から 1 要素ずつたどる（リ
   while [ -n "$rest" ]; do
     rest="${rest#/}"; comp="${rest%%/*}"
     if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
-    case "$comp" in ""|.) continue ;; ..) cur="$(dirname "$cur")"; continue ;; esac
+    case "$comp" in
+      ""|.) continue ;;
+      ..) cur="$(dirname "$cur")"
+          # .. で /tmp の形の場所から出たら、その下ではなくなる
+          if [ -n "$route_tmp" ]; then case "$cur/" in "$route_tmp"/*) ;; *) route_tmp="" ;; esac; fi
+          continue ;;
+    esac
     next="${cur%/}/$comp"
     if [ -L "$next" ]; then
       hops=$((hops + 1))
@@ -231,7 +237,7 @@ if unsafe_route "$hooks"; then
 fi
 # /tmp の形の場所を通るなら、置き場所が消えた後に他人に同じ名前で作り直されうる（再起動や定期の掃除で消える）
 if [ -n "$route_tmp" ]; then
-  echo "== 注意: フックの置き場所（${hooks}）が、誰でも書き込める ${route_tmp} の下にあります。消えると他人に作り直され、そこに置かれたフックが push のたびにあなたの権限で動くことがあります。ホームの下に置くことを勧めます" >&2
+  echo "== 注意: フックの置き場所（${hooks}）が、他人が書き込める ${route_tmp} の下にあります。消えると他人に作り直され、そこに置かれたフックが push のたびにあなたの権限で動くことがあります。ホームの下に置くことを勧めます" >&2
 fi
 if [ -e "$hooks" ] && [ ! -O "$hooks" ]; then
   echo "フックの置き場所（${hooks}）が自分の持ち物ではありません。自分の持ち物の場所に core.hooksPath を設定し直してから実行してください。" >&2
