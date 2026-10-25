@@ -17,7 +17,7 @@
 # reviewed_sha.* と HEAD を照合する）。レビューを回していない「差分なし」の記録だけは --no-diff を付け、
 # origin/HEAD との間に本当に差分が無いことを確かめて記録する。
 #
-# 書き先: $PWD/.review-reports/latest.json（HEAD の SHA を自動で記録）
+# 書き先: 作業ツリーごとの git のディレクトリの中の ai-review/latest.json（reports-guard.sh の record_file。HEAD の SHA を自動で記録）
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -170,25 +170,27 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 # 差分レビューのチェーン（gate.py が前回の記録とのつながりを確かめる）
 cbase="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
 chain_mb="$([ -n "$cbase" ] && git merge-base "$cbase" HEAD 2>/dev/null || true)"
-prev_head="$(sed -n 's/.*"head_sha": *"\([0-9a-f]*\)".*/\1/p' .review-reports/latest.json 2>/dev/null | head -1)"
+rec="$(record_file)" || { echo "git のディレクトリを確かめられないので、記録の置き場所を決められません" >&2; exit 1; }
+prev_head="$(sed -n 's/.*"head_sha": *"\([0-9a-f]*\)".*/\1/p' "$rec" 2>/dev/null | head -1)"
 prev_anc=false
 [ -n "$prev_head" ] && git merge-base --is-ancestor "$prev_head" HEAD 2>/dev/null && prev_anc=true
 
-mkdir -p .review-reports
+mkdir -p "$(dirname "$rec")"
 # 値は --x=値 の形で渡す（- で始まる理由を argparse がオプションと取り違えないように）
 set -- record --verdict="$verdict" --head="$sha" --branch="$branch" --mode="$mode" \
   --escalate="$escalate" --escalation-done="$done_flag" --skipped-by-user="$skipped" \
-  --reason="$reason" --report="$report" --previous .review-reports/latest.json \
+  --reason="$reason" --report="$report" --previous "$rec" \
   --rules "$here/../escalation-rules.txt" --rules ".ai-review/escalation-rules.local.txt" \
   --merge-base="$chain_mb" --prev-ancestor="$prev_anc"
 [ -n "$items" ] && set -- "$@" --items="$items"
 [ -n "$report_dir" ] && set -- "$@" --run "$report_dir"
 [ "$no_diff" = "true" ] && set -- "$@" --no-diff
-tmp=".review-reports/latest.json.tmp.$$"
+tmp="$(mktemp "$(dirname "$rec")/latest.json.tmp.XXXXXX")" || exit 1
 if ! "$py" -I "$here/gate.py" "$@" > "$tmp"; then
   rm -f "$tmp"; echo "記録しませんでした（上のエラーを直して記録し直す）" >&2; exit 1
 fi
 # 途中で落ちて壊れた latest.json を残さないよう、書き終えてから置き換える
-mv "$tmp" .review-reports/latest.json
+mv "$tmp" "$rec"
+record_compat_copy "$rec" || true   # 入っているフックが古い版なら、知らせて古い場所にも写しを置く
 # 表示は要約だけにし、制御文字（C0・C1）を潰す（latest.json の値はレビュー対象のファイル名などを含む）
-"$py" -I "$here/gate.py" resolve --latest .review-reports/latest.json --list
+"$py" -I "$here/gate.py" resolve --latest "$rec" --list

@@ -136,5 +136,38 @@ printf '100644 %s\t-\377\n100644 %s\t.review-reports/latest.json\n' "$bl" "$bl" 
 # 一時ファイルの名前は予測できない
 ! grep -q '".tmp"' "$RR" && grep -q 'mkstemp' "$RR" && ok "run-reviews.sh の一時ファイルは mkstemp で作る" || ng "予測できる .tmp が残っている"
 
+echo "5. 記録の置き場所（.git の中）"
+rec_json(){ printf '{"version": 3, "head_sha": "%s", "branch": "main", "mode": "branch", "verdict": "pass", "scope": "full", "full_count": 1, "escalate": false, "escalation_done": false, "skipped_by_user": false}\n' "$1"; }
+mkrepo "$T/r11"; h11="$(git -C "$T/r11" rev-parse HEAD)"
+mkdir -p "$T/r11/.review-reports"; rec_json "$h11" > "$T/r11/.review-reports/latest.json"   # 作業ツリーにだけある記録（チェックアウトや reset で作れる）
+(cd "$T/r11" && printf 'refs/heads/main %s refs/heads/main %s\n' "$h11" $zero | bash "$HOOK" origin x > "$T/r11.out" 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q '置き場所' "$T/r11.out" && ok "作業ツリーにだけある記録では通さず、置き場所が変わったと知らせる" || ng "rc=$rc $(head -1 "$T/r11.out")"
+gd11="$(git -C "$T/r11" rev-parse --absolute-git-dir)"; mkdir -p "$gd11/ai-review"; rec_json "$h11" > "$gd11/ai-review/latest.json"
+(cd "$T/r11" && printf 'refs/heads/main %s refs/heads/main %s\n' "$h11" $zero | bash "$HOOK" origin x > "$T/r11b.out" 2>&1); rc=$?
+[ $rc -eq 0 ] && ok ".git の中の記録で通す" || ng "rc=$rc $(head -2 "$T/r11b.out")"
+( . "$here/reports-guard.sh"; [ "$(record_file "$T/r11")" = "$gd11/ai-review/latest.json" ] ) && ok "record_file は作業ツリーごとの .git の中を指す" || ng "record_file"
+
+# 古い版のフック（記録を作業ツリーから読む）が入っていれば、知らせて、入れ直すまで古い場所にも写しを置く
+mkrepo "$T/r12"; mkdir -p "$T/r12hooks"
+printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest.json"\n' > "$T/r12hooks/pre-push"; chmod +x "$T/r12hooks/pre-push"
+git -C "$T/r12" config core.hooksPath "$T/r12hooks"
+gd12="$(git -C "$T/r12" rev-parse --absolute-git-dir)"; mkdir -p "$gd12/ai-review"; rec_json "$(git -C "$T/r12" rev-parse HEAD)" > "$gd12/ai-review/latest.json"
+( cd "$T/r12" && . "$here/reports-guard.sh"; record_compat_copy "$gd12/ai-review/latest.json" ) 2> "$T/r12.err"
+[ -f "$T/r12/.review-reports/latest.json" ] && grep -q 'install.sh' "$T/r12.err" && ok "古い版のフックなら知らせて、古い場所にも写しを置く" || ng "写し・案内: $(cat "$T/r12.err")"
+cp "$HOOK" "$T/r12hooks/pre-push"; rm -f "$T/r12/.review-reports/latest.json"
+( cd "$T/r12" && . "$here/reports-guard.sh"; record_compat_copy "$gd12/ai-review/latest.json" ) 2> "$T/r12b.err"
+[ ! -f "$T/r12/.review-reports/latest.json" ] && [ ! -s "$T/r12b.err" ] && ok "新しい版のフックなら写しを置かない" || ng "新しい版で写しを置いた"
+# 呼び継ぐ先（リポジトリの .git/hooks/pre-push）が古い版でも、写しを置く
+printf '#!/usr/bin/env bash\n# ai-review-managed-hook\nf=".review-reports/latest.json"\n' > "$T/r12/.git/hooks/pre-push"; chmod +x "$T/r12/.git/hooks/pre-push"
+( cd "$T/r12" && . "$here/reports-guard.sh"; record_compat_copy "$gd12/ai-review/latest.json" ) 2> "$T/r12c.err"
+[ -f "$T/r12/.review-reports/latest.json" ] && ok "呼び継ぐ先が古い版でも、写しを置く" || ng "呼び継ぐ先の古い版を見落とした: $(cat "$T/r12c.err")"
+# 古い場所の latest.json がディレクトリなら、写しを「置けた」と言わない
+rm -f "$T/r12/.review-reports/latest.json"; mkdir -p "$T/r12/.review-reports/latest.json"
+( cd "$T/r12" && . "$here/reports-guard.sh"; record_compat_copy "$gd12/ai-review/latest.json" ) 2> "$T/r12d.err"; rc=$?
+[ $rc -ne 0 ] && grep -q '置けませんでした' "$T/r12d.err" && ok "古い場所がディレクトリなら、写しを置けなかったと知らせる" || ng "rc=$rc $(cat "$T/r12d.err")"
+rm -rf "$T/r12/.review-reports/latest.json"
+grep -q '# ai-review-record: git-dir' "$HOOK" && ok "フックに版の目印がある" || ng "フックに版の目印が無い"
+! grep -q 'tmp="\$f.tmp.\$\$"' "$here/resolve-item.sh" && ok "resolve-item.sh の一時ファイルは mktemp で作る" || ng "予測できる一時ファイル名が残っている"
+
 echo "== PASS $pass / FAIL $fail =="
 [ $fail -eq 0 ]

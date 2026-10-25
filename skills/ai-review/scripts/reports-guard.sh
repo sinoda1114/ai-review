@@ -8,6 +8,42 @@
 #   grep -q は途中で読むのをやめ、pipefail の下で上流が SIGPIPE で失敗扱いになるので、-c で最後まで読む。
 #   既知の限界: ファイルシステムの上での別名（同じ実体になる綴りの違う名前）の確認は、索引と作業ツリーだけで行う
 #   （チェックアウトしていないコミットのツリーの名前は、ファイルシステムで比べられない）。
+# record_file [<リポジトリの中のパス>]: ゲートが信用する記録（latest.json）の場所。作業ツリーごとの git のディレクトリの中
+#   （.git/ai-review/latest.json。作業ツリーの別のディレクトリなら .git/worktrees/<名前>/ai-review/latest.json）。
+#   チェックアウトや reset では作れない場所に置く（作業ツリーの .review-reports だと、祖先のコミットに仕込んだ偽の記録が
+#   reset の後に追跡されないファイルとして残り、それでゲートを通せた）。レビューの出力（run-*）は .review-reports に置く。
+record_file() {
+  local gd; gd="$(git -C "${1:-.}" rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$gd" ] || return 1
+  printf '%s/ai-review/latest.json\n' "$gd"
+}
+
+# record_compat_copy <記録>: 入っている pre-push フックが古い版（記録を作業ツリーの .review-reports から読む）なら、
+#   知らせて、入れ直すまでの間だけ古い場所にも写しを置く。スキルはリンクで入っていてすぐ新しくなるが、フックは写しなので、
+#   入れ直すまで古い版のまま残る（写しを置かないと push が必ず止まる）。新しい版のフックは古い場所を読まないので、守りは弱まらない
+record_compat_copy() {
+  local rec="$1" top hp hk t old=""
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  hp="$(git config --type=path --includes --get core.hooksPath 2>/dev/null)"   # ~ や ~user は git 自身に展開させる
+  [ -n "$hp" ] || hp="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks"
+  case "$hp" in /*) ;; *) hp="$top/$hp" ;; esac
+  # 効いているフックと、新しいフックが通した後に呼び継ぐリポジトリのフック（.git/hooks/pre-push）の両方を見る
+  for hk in "$hp/pre-push" "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/hooks/pre-push"; do
+    if [ -f "$hk" ] && grep -qxF '# ai-review-managed-hook' "$hk" && ! grep -qxF '# ai-review-record: git-dir' "$hk"; then old="$hk"; break; fi
+  done
+  [ -n "$old" ] || return 0
+  local how="install.sh を実行し直してください"
+  [ "$old" = "$hp/pre-push" ] && [ -z "$(git config --local --get core.hooksPath 2>/dev/null)" ] || how="${old} を消すか、スキルの hooks/pre-push で置き換えてください（install.sh はグローバルの置き場所にしか入れません）"
+  echo "注意: 入っている pre-push フック（${old}）は古い版で、記録を作業ツリーの .review-reports から読みます。${how}。入れ直すまでの間だけ、古い場所にも記録の写しを置きます（その間は、作業ツリーに残った偽の記録で push が通りうる）" >&2
+  # 先に古い場所の記録を消す（写しに失敗しても、前の記録を古いフックに信用させない）
+  rm -f "$top/.review-reports/latest.json" 2>/dev/null
+  if [ ! -e "$top/.review-reports/latest.json" ] && [ ! -L "$top/.review-reports/latest.json" ] && mkdir -p "$top/.review-reports" 2>/dev/null && t="$(mktemp "$top/.review-reports/latest.json.tmp.XXXXXX")"; then
+    cp "$rec" "$t" && mv -f "$t" "$top/.review-reports/latest.json" && return 0
+    rm -f "$t"
+  fi
+  echo "注意: 古い場所に記録の写しを置けませんでした（古い版のフックでは push が止まります。install.sh を実行し直してください）" >&2
+  return 1
+}
+
 # reports_unreadable <リポジトリのルート> <コミット>: コミットはあるのに、そのツリーを読めなければ 0（読めないものは信用しない）
 reports_unreadable() {
   if ! git -C "$1" rev-parse -q --verify "$2" >/dev/null 2>&1; then
