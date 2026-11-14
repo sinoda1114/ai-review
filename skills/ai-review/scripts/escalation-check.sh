@@ -12,7 +12,7 @@
 #
 # 出力: JSON 1 行を stdout に出す。
 #   {"escalate":true|false,"reasons":[...],"secret_paths":[...],"files":N,"added":N,"base":"...","size_skipped":true|false}
-# 終了コード: 0 = 判定完了（escalate の真偽は JSON で見る）、2 = git 取得失敗
+# 終了コード: 0 = 判定完了（escalate の真偽は JSON で見る）、2 = git 取得失敗、またはルールの不正
 #
 # bash 3.2（macOS 既定）で動く。連想配列・mapfile は使わない。
 set -uo pipefail
@@ -182,6 +182,8 @@ while IFS= read -r ex; do
   [ -n "$ex" ] || continue
   filtered="$(printf '%s\n' "$secret_paths" | grep -viE -- "$ex")"; rc=$?
   if [ $rc -gt 1 ]; then
+    # stdout は呼び出し側が失敗時に捨てるので、status.txt に残る stderr にも出す
+    echo "ERROR: secret_exempt のパターンが不正です: ${ex}" >&2
     echo '{"error":"secret_exempt のパターンが不正です（escalation-rules.txt を確認してください）"}'
     exit 2
   fi

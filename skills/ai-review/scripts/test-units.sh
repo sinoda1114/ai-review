@@ -327,7 +327,7 @@ r17="$T/r17"; mkdir -p "$r17" && ( cd "$r17" && git init -q -b main && echo x > 
 out17="$(cd "$r17" && bash "$ESC" --base main 2>/dev/null)"
 sec17="$(printf '%s' "$out17" | sp17 2>/dev/null)"
 bad=""; for f in .env.example .env.sample .env.template .env.dist config/.env.local.example; do printf '%s\n' "$sec17" | grep -qxF -- "$f" && bad="$bad $f"; done
-[ -n "$out17" ] && [ -z "$bad" ] && ok "テンプレート（.env.example / .sample / .template / .dist）は秘密情報にしない" || ng "テンプレートを秘密情報にした:$bad / $out17"
+printf '%s' "$out17" | grep -q '"secret_paths"' && [ -z "$bad" ] && ok "テンプレート（.env.example / .sample / .template / .dist）は秘密情報にしない" || ng "テンプレートを秘密情報にした:$bad / $out17"
 miss=""; for f in .env .env.local .env.production .env.example.local .env.examples deep/.env; do printf '%s\n' "$sec17" | grep -qxF -- "$f" || miss="$miss $f"; done
 [ -n "$out17" ] && [ -z "$miss" ] && ok "本物の .env / .env.local / .env.production などは引き続き秘密情報にする" || ng "秘密情報から漏れた:$miss / $out17"
 printf '%s' "$out17" | grep -qE 'A:path:[^"]*\.env(\.[^/"]*)?\.(example|sample|template|dist)"' && ok ".env のテンプレートは秘密情報から外しても、高リスクのパス（昇格）の判定には残す" || ng "昇格の判定から外れた: $out17"
@@ -343,7 +343,8 @@ rm -rf "$r17/.ai-review"
 # 共通ルールの secret_exempt が正規表現として壊れていたら、秘密情報を全部消さずに止める
 bad17="$T/bad17-rules.txt"; { grep -v '^secret_exempt' "$here/../escalation-rules.txt"; printf 'secret_exempt (^|/\\.env\\.example$\n'; } > "$bad17"
 out17e="$(cd "$r17" && bash "$ESC" --base main --rules "$bad17" 2>/dev/null)"; rc17e=$?
-[ $rc17e -eq 2 ] && printf '%s' "$out17e" | grep -q '"error"' && ok "壊れた secret_exempt では秘密情報を消さずにエラーで止まる" || ng "壊れた secret_exempt で止まらない: rc=$rc17e $out17e"
+err17e="$(cd "$r17" && bash "$ESC" --base main --rules "$bad17" 2>&1 >/dev/null)"
+[ $rc17e -eq 2 ] && printf '%s' "$out17e" | grep -q '"error"' && printf '%s' "$err17e" | grep -q 'secret_exempt' && ok "壊れた secret_exempt では秘密情報を消さずにエラーで止まり、stderr にも理由を出す" || ng "壊れた secret_exempt で止まらない: rc=$rc17e $out17e"
 # プロジェクトのルールに書いた secret_exempt は無視し、そのことを stderr に出す
 mkdir -p "$r17/.ai-review"; printf 'secret_exempt .*\n' > "$r17/.ai-review/escalation-rules.local.txt"
 err17f="$(cd "$r17" && bash "$ESC" --base main 2>&1 >/dev/null)"
