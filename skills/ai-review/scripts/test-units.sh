@@ -340,6 +340,15 @@ printf 'secret (^|/)\\.env\\.sample$\n' > "$r17/.ai-review/escalation-rules.loca
 sec17c="$(cd "$r17" && bash "$ESC" --base main 2>/dev/null | sp17 2>/dev/null)"
 printf '%s\n' "$sec17c" | grep -qxF .env.sample && ! printf '%s\n' "$sec17c" | grep -qxF .env.example && ok "プロジェクトの secret で明示したテンプレートは秘密情報のまま（共通の除外より優先）" || ng "プロジェクトの secret 指定が共通の除外で消えた: $sec17c"
 rm -rf "$r17/.ai-review"
+# 共通ルールの secret_exempt が正規表現として壊れていたら、秘密情報を全部消さずに止める
+bad17="$T/bad17-rules.txt"; { grep -v '^secret_exempt' "$here/../escalation-rules.txt"; printf 'secret_exempt (^|/\\.env\\.example$\n'; } > "$bad17"
+out17e="$(cd "$r17" && bash "$ESC" --base main --rules "$bad17" 2>/dev/null)"; rc17e=$?
+[ $rc17e -eq 2 ] && printf '%s' "$out17e" | grep -q '"error"' && ok "壊れた secret_exempt では秘密情報を消さずにエラーで止まる" || ng "壊れた secret_exempt で止まらない: rc=$rc17e $out17e"
+# プロジェクトのルールに書いた secret_exempt は無視し、そのことを stderr に出す
+mkdir -p "$r17/.ai-review"; printf 'secret_exempt .*\n' > "$r17/.ai-review/escalation-rules.local.txt"
+err17f="$(cd "$r17" && bash "$ESC" --base main 2>&1 >/dev/null)"
+printf '%s' "$err17f" | grep -q 'secret_exempt' && ok "プロジェクトのルールの secret_exempt を無視したことを stderr に出す" || ng "無視したことが出ない: $err17f"
+rm -rf "$r17/.ai-review"
 # テンプレートを 1 つだけ変えた差分でも、高リスクのパス（昇格）の判定には残す
 for f in .env.sample .env.template .env.dist config/.env.local.example; do
   r17d="$T/r17d-$(printf '%s' "$f" | tr '/.' '__')"; mkdir -p "$r17d"

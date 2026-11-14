@@ -151,8 +151,12 @@ $hit"
       secret_exempt)
         # 共通ルール（~/.claude 側）に書いたものだけ効かせる。プロジェクトのルールはレビュー対象の木にあり、
         # PR が自分で書き足せるため、そこからは秘密情報の判定を外させない（足す方向の secret だけ受ける）
-        [ "$f" = "$rules" ] && secret_exempts="$secret_exempts
+        if [ "$f" = "$rules" ]; then
+          secret_exempts="$secret_exempts
 $pat"
+        else
+          echo "WARN: プロジェクトのルール（${f}）の secret_exempt は無視します（共通ルールにだけ書けます）" >&2
+        fi
         ;;
       max_files) max_files="$pat" ;;
       max_added) max_added="$pat" ;;
@@ -172,9 +176,16 @@ read_rules "$local_rules"
 secret_only=0
 # 共通ルールの secret に一致したパスのうち、secret_exempt（共通ルールのみ）に一致するものを外す。
 # プロジェクトのルールの secret 一致は除外の後に足す（プロジェクトの明示が共通の除外より優先）
+# grep の終了コード 2 以上（パターンが不正）を「一致なし」と取り違えると、secret_paths が空になり
+# 秘密情報が全部外れて外部モデルへ送られる。その場合は判定せずに止める（run-reviews.sh は記録させない）
 while IFS= read -r ex; do
   [ -n "$ex" ] || continue
-  secret_paths="$(printf '%s\n' "$secret_paths" | grep -viE -- "$ex" || true)"
+  filtered="$(printf '%s\n' "$secret_paths" | grep -viE -- "$ex")"; rc=$?
+  if [ $rc -gt 1 ]; then
+    echo '{"error":"secret_exempt のパターンが不正です（escalation-rules.txt を確認してください）"}'
+    exit 2
+  fi
+  secret_paths="$filtered"
 done <<EXEOF
 $secret_exempts
 EXEOF
