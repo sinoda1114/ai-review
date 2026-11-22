@@ -1106,7 +1106,8 @@ grep -q '混み合い' .review-reports/c3/status.txt && ng "混み合い以外�
 AI_REVIEW_DRY_FAIL="own-review:capacity" run --out .review-reports/c4
 grep -q '混み合い' .review-reports/c4/status.txt && ng "Claude 側の失敗を Codex の混み合いとして扱った" || ok "Claude 側の失敗は、この経路の対象にしない"
 # gpt-6.2-* を古い Codex CLI で呼ぶと model_not_found で落ちる。失敗の行に、要る版と更新の仕方を書き添える
-AI_REVIEW_DRY_FAIL="codex-review:model" run --out .review-reports/m1
+AI_REVIEW_DRY_FAIL="codex-review:model" run --out .review-reports/m1; rc=$?
+[ $rc -eq 1 ] && ok "model_not_found でも、ほかの失敗と同じく終了コード 1 を返す" || ng "m1 の終了コード: $rc"
 grep -q '^FAILED codex-review (非ゼロ終了。codex-review.err 参照。途中出力は codex-review.partial.md。エラー出力にモデルを使えないことを示す語（model_not_found か model is not supported）がある: .*gpt-6.2-\* は Codex CLI 0.169.0 以上が要る' .review-reports/m1/status.txt && ok "model_not_found なら、Codex CLI 0.169.0 以上が要ると書く" || ng "m1: $(grep codex-review .review-reports/m1/status.txt)"
 grep -q '混み合い' .review-reports/m1/status.txt && ng "model_not_found で回し直した" || ok "model_not_found では回し直さない"
 AI_REVIEW_DRY_FAIL="codex-review:other" run --out .review-reports/m2
