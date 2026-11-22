@@ -779,8 +779,9 @@ for n in $names; do
     # 途中まで出力があっても完成品ではない。突合に使わせない。
     [ -s "$out/$n.md" ] && { mv "$out/$n.md" "$out/$n.partial.md" 2>/dev/null || true; : > "$out/$n.md"; }
     # gpt-6.2-* を古い Codex CLI で呼ぶと model_not_found で落ちる（エラー行の形だけを見る）
-    if tail -n 20 "$out/$n.err" 2>/dev/null | grep -E '^(ERROR|error)[: ].*"code" *: *"model_not_found"' >/dev/null; then
-      echo "FAILED $n (モデルを使えない（model_not_found）。gpt-6.2-* は Codex CLI $CODEX_MIN_VERSION 以上が要る。codex update などで更新する。$n.err 参照)" >> "$status"; rc_all=1
+    if case "$n" in codex-*) true ;; *) false ;; esac \
+      && tail -n 20 "$out/$n.err" 2>/dev/null | grep -E '^(ERROR|error)[: ].*"code" *: *"model_not_found"' >/dev/null; then
+      echo "FAILED $n (モデルを使えない（model_not_found）。gpt-6.2-* は Codex CLI $CODEX_MIN_VERSION 以上が要る。codex --version が古ければ更新し、新しければアカウントでそのモデルを使えるかを確かめる。$n.err 参照)" >> "$status"; rc_all=1
     else
       echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md)" >> "$status"; rc_all=1
     fi
