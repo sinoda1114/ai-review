@@ -787,7 +787,7 @@ for n in $names; do
     # 原因とは断定せず「語がある」という事実と、そうだった場合の手当てだけを書く
     if case "$n" in codex-*) true ;; *) false ;; esac \
       && tail -n 50 "$out/$n.err" 2>/dev/null | grep -iE 'model_not_found|model is not supported' >/dev/null; then
-      echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md。エラー出力に model_not_found の語がある: モデルを使えなかったのなら、gpt-6.2-* は Codex CLI $CODEX_MIN_VERSION 以上が要る。codex --version が古ければ更新し、新しければアカウントでそのモデルを使えるかを確かめる)" >> "$status"; rc_all=1
+      echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md。エラー出力にモデルを使えないことを示す語（model_not_found か model is not supported）がある: モデルを使えなかったのなら、gpt-6.2-* は Codex CLI $CODEX_MIN_VERSION 以上が要る。codex --version が古ければ更新し、新しければアカウントでそのモデルを使えるかを確かめる)" >> "$status"; rc_all=1
     else
       echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md)" >> "$status"; rc_all=1
     fi
