@@ -20,7 +20,7 @@ HEAD の clean な worktree を作る ─ 未コミットの変更や作業中�
   ├─ 昇格の判定（パス・危険な API の追加行・規模・秘密情報）
   │
   ├─ 並列・独立に ┬ own-review   … 自前の観点を claude -p に直接渡す（Claude Opus）
-  │               └ codex review  … Codex 純正 review をそのまま（GPT-6 Sol）
+  │               └ codex review  … Codex 純正 review をそのまま（GPT-6.2 Sol）
   │               （高リスクなら own-security、--deep なら Fable・Astra も加えて 5 本）
   ▼
 結論の下限（生の出力から機械的に決まる）と、指摘の和集合で結論を出す
@@ -37,7 +37,7 @@ git push ─ pre-push フックが記録（git のディレクトリの中の ai
 | もの | 用途 |
 |---|---|
 | Claude Code CLI（`claude`） | 自前観点のレビュアー。Opus 5.5 を使う |
-| Codex CLI（`codex`） | 二重レビューのもう一方。無いと Claude 側だけになり、毎回「未取得」の項目として記録に残る |
+| Codex CLI（`codex`） | 二重レビューのもう一方（GPT-6.2 Sol。0.169.0 以上）。無いと Claude 側だけになり、毎回「未取得」の項目として記録に残る |
 | python3（3.8 以上、標準ライブラリのみ） | 結論の判定と記録 |
 | git、bash | ― |
 
