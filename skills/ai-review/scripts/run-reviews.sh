@@ -21,10 +21,10 @@
 #
 # レビュアー（出力ファイル名 = 名前。DESIGN-v3.md §3）:
 #   own-review        prompts/own-review.md   × claude-opus-5-5 / high   （毎回）
-#   codex-review      codex exec review 純正  × gpt-6.1-sol     / high   （毎回。独自の指示は渡さない）
+#   codex-review      codex exec review 純正  × gpt-6.2-sol     / high   （毎回。独自の指示は渡さない）
 #   own-security      prompts/own-security.md × claude-opus-5-5 / high   （--security と --deep）
 #   own-review-fable  prompts/own-review.md   × claude-fable-5-2 / high  （--deep）
-#   codex-astra       codex exec review 純正  × gpt-6-astra     / high   （--deep）
+#   codex-astra       codex exec review 純正  × gpt-6.2-astra   / high   （--deep）
 #   モデル・effort は固定（環境変数で上書きできない。変えるならこのファイルを直す）。
 #   Opus 5.5 は CLI 2.1.280 以上が必要。既定 effort が medium なので --effort high を明示し続けること。
 #
@@ -48,8 +48,8 @@ set -uo pipefail
 CLAUDE_MODEL="claude-opus-5-5"
 CLAUDE_DEEP_MODEL="claude-fable-5-2"
 CLAUDE_EFFORT="high"
-CODEX_MODEL="gpt-6.1-sol"
-CODEX_DEEP_MODEL="gpt-6-astra"
+CODEX_MODEL="gpt-6.2-sol"
+CODEX_DEEP_MODEL="gpt-6.2-astra"
 CODEX_EFFORT="high"
 # 自前観点に許す道具（読み取り + 読み取り系の git サブコマンドのみ）と、明示的に禁じる道具。
 # Bash(git:*) にしない: `git -c core.fsmonitor=<cmd> status` などで任意のコマンドを実行でき、

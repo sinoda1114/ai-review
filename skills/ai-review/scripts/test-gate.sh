@@ -73,7 +73,7 @@ grep -q 'Bash(git:\*)\|Bash(git grep' .review-reports/r1/own-review.md && ng "gi
 grep -q -- "Bash(git \*--contents\*)" .review-reports/r1/own-review.md && ok "git blame --contents（リポジトリ外の読み取り）を拒む" || ng "--contents の拒否"
 grep -q -- "--setting-sources  --safe-mode --strict-mcp-config" .review-reports/r1/own-review.md && ok "ユーザー・プロジェクトの設定（allow・フック・CLAUDE.md）と MCP を読ませない" || ng "設定の隔離"
 grep -q -- "--disallowedTools .*Bash(git \*--output\*)" .review-reports/r1/own-review.md && ok "git の --output（ファイル書き込み）を位置に関係なく拒む" || ng "--output の拒否"
-grep -q -- '-m gpt-6.1-sol -c model_reasoning_effort="high"' .review-reports/r1/codex-review.md && ok "codex-review は gpt-6.1-sol / high の純正 review（独自の指示なし）" || ng "codex のモデル"
+grep -q -- '-m gpt-6.2-sol -c model_reasoning_effort="high"' .review-reports/r1/codex-review.md && ok "codex-review は gpt-6.2-sol / high の純正 review（独自の指示なし）" || ng "codex のモデル"
 grep -q -- 'exec review --base origin/main --skip-git-repo-check' .review-reports/r1/codex-review.md && ok "Codex に比較元を渡す" || ng "codex の比較元"
 grep -q -- '-c notify=\[\] -c mcp_servers={}' .review-reports/r1/codex-review.md && ok "Codex のプロジェクト設定（notify・MCP）を打ち消す" || ng "codex の設定の打ち消し"
 grep -q -- '-c project_doc_max_bytes=0' .review-reports/r1/codex-review.md && ok "Codex にレビュー対象の AGENTS.md を読ませない（指示で指摘を消されないように）" || ng "AGENTS.md を読ませない設定が無い"
@@ -109,7 +109,7 @@ for nm in own-review codex-review own-security own-review-fable codex-astra; do
 done
 [ -z "$bad" ] && ok "5 本とも起動・完了（own-review / codex-review / own-security / own-review-fable / codex-astra）" || ng "起動・完了していない:$bad"
 grep -q -- '--model claude-fable-5-2 --effort high' .review-reports/r3/own-review-fable.md && ok "2 人目の Claude は claude-fable-5-2 / high" || ng "fable のモデル"
-grep -q -- '-m gpt-6-astra -c model_reasoning_effort="high"' .review-reports/r3/codex-astra.md && ok "2 人目の Codex は gpt-6-astra / high" || ng "astra のモデル"
+grep -q -- '-m gpt-6.2-astra -c model_reasoning_effort="high"' .review-reports/r3/codex-astra.md && ok "2 人目の Codex は gpt-6.2-astra / high" || ng "astra のモデル"
 grep -q '^# セキュリティの深掘りレビュー' .review-reports/r3/own-security.prompt.md && ok "own-security は深掘りのプロンプト" || ng "own-security のプロンプト"
 [ -f .review-reports/r3/deep.flag ] && ok "deep の印を残す" || ng "deep.flag なし"
 AI_REVIEW_DRY_RUN=1 bash "$RR" --out .review-reports/rx --deep --security >/dev/null 2>&1 && ng "--deep と --security を併用できた" || ok "--deep と --security は併用しない"
