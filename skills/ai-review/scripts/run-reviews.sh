@@ -553,19 +553,41 @@ fi
 
 # gpt-6.2-* は Codex CLI 0.169.0 以上が要る（それより前は model_not_found で毎回失敗する）。
 # 版は codex 自身の「codex-cli X.Y.Z」の行だけから読む（ラッパーの警告などに別の数字が混ざりうる）。
-# 0.169.0 のプレリリースは古い版とみなす。読めなければ起動して、失敗は従来どおり FAILED で拾う
+# 0.169.0 のプレリリースは古い版とみなす。読めなければ起動して、失敗は従来どおり FAILED で拾う。
+# 確かめるのは Codex を起動すると決まった後だけ（start_codex の中）、レビューを動かす場所（$run_cwd）で、
+# CODEX_VERSION_TIMEOUT 秒で打ち切る（応答しない CLI でゲート全体を止めない）。結果は 1 回分を使い回す
 CODEX_MIN_VERSION="0.169.0"
-codex_version_out=""
-if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ]; then
-  codex_version_out="${AI_REVIEW_DRY_CODEX_VERSION:-codex-cli $CODEX_MIN_VERSION}"
-elif [ -n "$codex_bin" ]; then
-  codex_version_out="$("$codex_bin" --version < /dev/null 2>/dev/null)"
-fi
-codex_version="$(printf '%s\n' "$codex_version_out" | sed -n 's/^codex-cli \([^ ]*\).*/\1/p' | head -1)"
+CODEX_VERSION_TIMEOUT=10
+codex_version=""; codex_version_checked=0
+check_codex_version() {
+  [ $codex_version_checked -eq 1 ] && return
+  codex_version_checked=1
+  local vfile pid i
+  vfile="$(mktemp "${TMPDIR:-/tmp}/ai-review-codex-version.XXXXXX")" || return
+  if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ]; then
+    if [ -n "${AI_REVIEW_DRY_CODEX_VERSION_HANG:-}" ]; then
+      ( cd "$run_cwd" && exec sleep 60 ) > "$vfile" 2>/dev/null &
+    else
+      ( cd "$run_cwd" && printf '%s\n' "${AI_REVIEW_DRY_CODEX_VERSION:-codex-cli $CODEX_MIN_VERSION}" ) > "$vfile" 2>/dev/null &
+    fi
+  else
+    ( cd "$run_cwd" && exec "$codex_bin" --version ) < /dev/null > "$vfile" 2>/dev/null &
+  fi
+  pid=$!; i=0
+  while kill -0 "$pid" 2>/dev/null && [ $i -lt $((CODEX_VERSION_TIMEOUT * 10)) ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    echo "codex-version: 読めない（${CODEX_VERSION_TIMEOUT} 秒で応答なし） (cwd=$run_cwd)" >> "$status"; rm -f "$vfile"; return
+  fi
+  wait "$pid" 2>/dev/null
+  codex_version="$(sed -n 's/^codex-cli \([^ ]*\).*/\1/p' "$vfile" | head -1)"; rm -f "$vfile"
+  echo "codex-version: ${codex_version:+codex-cli }${codex_version:-読めない} (cwd=$run_cwd)" >> "$status"
+}
 codex_too_old() {  # 0 = 要る版より古い
-  local core="${codex_version%%-*}" lowest
+  local noplus="${codex_version%%+*}" core lowest   # +build は数えない。-プレリリースは数える
+  core="${noplus%%-*}"
   printf '%s\n' "$core" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || return 1
-  if [ "$core" = "$CODEX_MIN_VERSION" ]; then [ "$codex_version" != "$core" ]; return; fi
+  if [ "$core" = "$CODEX_MIN_VERSION" ]; then [ "$noplus" != "$core" ]; return; fi
   lowest="$(printf '%s\n%s\n' "$core" "$CODEX_MIN_VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)"
   [ "$lowest" = "$core" ]
 }
@@ -588,9 +610,6 @@ start_codex() {
   if [ -n "$codex_off" ]; then echo "UNAVAILABLE $name (codex disabled: $codex_off)" >> "$status"; return; fi
   if [ $use_codex -ne 1 ]; then echo "UNAVAILABLE $name (codex disabled: --no-codex)" >> "$status"; return; fi
   if [ -z "$codex_bin" ]; then echo "UNAVAILABLE $name (codex not found)" >> "$status"; return; fi
-  if codex_too_old; then
-    echo "UNAVAILABLE $name (Codex CLI $CODEX_MIN_VERSION 以上が要る。いまは ${codex_version}。codex update などで更新する)" >> "$status"; return
-  fi
   # レビュー対象の木に .codex/ があれば起動しない（プロジェクト設定の model_provider などで送信先や指示を
   # 差し替えられうる。どの条件で読まれるかは未確認なので、止める側に倒す）
   # 検査するのは Codex が動く木の直下（サブディレクトリから起動しても、直下の設定が読まれうる）
@@ -602,6 +621,10 @@ start_codex() {
     [ "$d" = "$tree_top" ] || [ "$d" = "/" ] && break
     d="$(dirname "$d")"
   done
+  check_codex_version
+  if codex_too_old; then
+    echo "UNAVAILABLE $name (Codex CLI $CODEX_MIN_VERSION 以上が要る。いまは ${codex_version}。codex update などで更新する)" >> "$status"; return
+  fi
   if [ "$mode" = "local" ]; then
     run_bg "$name" "$codex_bin" exec review --uncommitted --skip-git-repo-check \
         -m "$model" -c model_reasoning_effort="\"$CODEX_EFFORT\"" -c sandbox_mode="\"read-only\"" -c notify=[] -c mcp_servers={} -c project_doc_max_bytes=0 \
