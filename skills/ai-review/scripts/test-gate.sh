@@ -1110,10 +1110,12 @@ AI_REVIEW_DRY_FAIL="codex-review:model" run --out .review-reports/m1
 grep -q '^FAILED codex-review (モデルを使えない（model_not_found）。gpt-6.2-\* は Codex CLI 0.169.0 以上が要る' .review-reports/m1/status.txt && ok "model_not_found なら、Codex CLI 0.169.0 以上が要ると書く" || ng "m1: $(grep codex-review .review-reports/m1/status.txt)"
 grep -q '混み合い' .review-reports/m1/status.txt && ng "model_not_found で回し直した" || ok "model_not_found では回し直さない"
 AI_REVIEW_DRY_FAIL="codex-review:other" run --out .review-reports/m2
-grep -q 'model_not_found' .review-reports/m2/status.txt && ng "ほかの失敗に版の案内を付けた" || ok "ほかの失敗には版の案内を付けない"
+grep -q '^FAILED codex-review (非ゼロ終了' .review-reports/m2/status.txt && ! grep -q 'model_not_found' .review-reports/m2/status.txt && ok "ほかの失敗には版の案内を付けない" || ng "m2: $(grep codex-review .review-reports/m2/status.txt)"
 grep -q 'アカウントでそのモデルを使えるか' .review-reports/m1/status.txt && ok "版が新しい場合の原因（モデルの権限）も書く" || ng "m1: $(grep codex-review .review-reports/m1/status.txt)"
 AI_REVIEW_DRY_FAIL="own-review:model" run --out .review-reports/m3
-grep -q 'FAILED own-review (モデルを使えない' .review-reports/m3/status.txt && ng "Claude 側の失敗に Codex の版の案内を付けた" || ok "版の案内は Codex のレビュアーだけ"
+grep -q '^FAILED own-review (非ゼロ終了' .review-reports/m3/status.txt && ! grep -q 'FAILED own-review (モデルを使えない' .review-reports/m3/status.txt && ok "版の案内は Codex のレビュアーだけ" || ng "m3: $(grep own-review .review-reports/m3/status.txt)"
+AI_REVIEW_DRY_FAIL="codex-review:modeltext" run --out .review-reports/m4
+grep -q '^FAILED codex-review (モデルを使えない' .review-reports/m4/status.txt && ok "平文のエラー文でも版の案内を付ける" || ng "m4: $(grep codex-review .review-reports/m4/status.txt)"
 unset AI_REVIEW_CAPACITY_WAIT
 
 echo "== PASS $pass / FAIL $fail =="
