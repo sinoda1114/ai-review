@@ -138,29 +138,6 @@ AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_ESCALATION=real bash "$RR" --out .review-repor
 grep -q 'WARN: escalation-check.sh が失敗' .review-reports/r3bad/status.txt || ng "準備: escalation-check.sh が失敗していない"
 grep -q '^started codex' .review-reports/r3bad/status.txt && ng "秘密情報の判定ができないのに Codex を起動した" || ok "秘密情報の判定ができなければ Codex を起動しない（止める側）"
 G rm -q .env.local; G commit -qm unsecret
-# gpt-6.2-* は Codex CLI 0.169.0 以上が要る。古い版なら起動せず、更新が要ると書く
-for v in "codex-cli 0.169.0-alpha.3" "codex-cli 0.168.2+local" "$(printf 'node v9.9.9 is deprecated\ncodex-cli 0.168.2')"; do
-  AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_CODEX_VERSION="$v" bash "$RR" --out .review-reports/r3pre >/dev/null 2>&1; rc=$?
-  want="${v##*codex-cli }"
-  [ $rc -eq 0 ] && ! grep -q '^started codex' .review-reports/r3pre/status.txt && grep -qF "UNAVAILABLE codex-review (Codex CLI 0.169.0 以上が要る。いまは ${want}。" .review-reports/r3pre/status.txt \
-    && ok "版は codex-cli の行だけから読み、0.169.0 のプレリリースは古い版とみなす（${want}）" || ng "古い版（${v}）: rc=$rc $(grep -i codex .review-reports/r3pre/status.txt)"
-done
-# 版の確認は Codex を起動すると決まった後だけ、隔離先で、時間を限って行う
-AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_CODEX_VERSION="codex-cli 0.168.2" bash "$RR" --out .review-reports/r3nv --no-codex >/dev/null 2>&1
-grep -q '^codex-version' .review-reports/r3nv/status.txt && ng "--no-codex でも codex の版を確かめた" || ok "--no-codex のときは codex の版を確かめない"
-AI_REVIEW_DRY_RUN=1 bash "$RR" --out .review-reports/r3cwd >/dev/null 2>&1
-iso="$(sed -n 's/^isolated: HEAD [0-9a-f]* の clean な worktree でレビューする (\(.*\))$/\1/p' .review-reports/r3cwd/status.txt)"
-[ -n "$iso" ] && grep -qE "^codex-version: codex-cli 0\.169\.0 \(cwd=${iso}/?\)$" .review-reports/r3cwd/status.txt && ok "codex の版は、レビューを動かす隔離先で確かめる" || ng "版の確認の場所: iso=$iso $(grep '^codex-version' .review-reports/r3cwd/status.txt)"
-t0=$(date +%s); AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_CODEX_VERSION_HANG=1 bash "$RR" --out .review-reports/r3hang >/dev/null 2>&1; t1=$(date +%s)
-[ $((t1 - t0)) -lt 40 ] && grep -q '^codex-version: 読めない' .review-reports/r3hang/status.txt && grep -q '^started codex-review' .review-reports/r3hang/status.txt \
-  && ok "codex --version が応答しなければ時間で打ち切り、版を読めないものとして続ける" || ng "応答しない版の確認: $((t1 - t0))s $(grep -i codex .review-reports/r3hang/status.txt)"
-AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_CODEX_VERSION="codex-cli 0.168.2" bash "$RR" --out .review-reports/r3old --deep >/dev/null 2>&1
-grep -q '^started codex' .review-reports/r3old/status.txt && ng "Codex CLI 0.168.2 で Codex を起動した" || ok "Codex CLI が 0.169.0 未満なら Codex を起動しない"
-grep -q '^UNAVAILABLE codex-review (Codex CLI 0.169.0 以上が要る。いまは 0.168.2' .review-reports/r3old/status.txt && grep -q '^UNAVAILABLE codex-astra (Codex CLI 0.169.0' .review-reports/r3old/status.txt && ok "古い版は未取得として残し、要る版と今の版を書く" || ng "r3old status: $(grep -i codex .review-reports/r3old/status.txt)"
-for v in "codex-cli 0.169.0" "codex-cli 0.169.0+local" "codex-cli 0.171.0" "codex-cli 1.0.0" "unknown" "$(printf 'update 0.1.0 -> 0.171.0\ncodex-cli 0.171.0')"; do
-  AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_CODEX_VERSION="$v" bash "$RR" --out .review-reports/r3new >/dev/null 2>&1
-  grep -q '^started codex-review' .review-reports/r3new/status.txt && ok "「${v}」なら Codex を起動する" || ng "「${v}」で起動しない: $(grep -i codex .review-reports/r3new/status.txt)"
-done
 [ "$(grep -c '^started ' .review-reports/r3n/status.txt)" = "3" ] && ok "--deep --no-codex は Claude の 3 本だけ" || ng "no-codex の起動数"
 grep -q '^UNAVAILABLE codex-review' .review-reports/r3n/status.txt && ok "--no-codex を明示しても UNAVAILABLE（二重化の欠け）として残す" || ng "--no-codex が未取得にならない"
 printf 'x\n' > .review-reports/r3n/reviewed_base.security
@@ -1128,6 +1105,12 @@ AI_REVIEW_DRY_FAIL="codex-review:other" run --out .review-reports/c3
 grep -q '混み合い' .review-reports/c3/status.txt && ng "混み合い以外の失敗で待った" || ok "混み合い以外の失敗では待たない"
 AI_REVIEW_DRY_FAIL="own-review:capacity" run --out .review-reports/c4
 grep -q '混み合い' .review-reports/c4/status.txt && ng "Claude 側の失敗を Codex の混み合いとして扱った" || ok "Claude 側の失敗は、この経路の対象にしない"
+# gpt-6.2-* を古い Codex CLI で呼ぶと model_not_found で落ちる。失敗の行に、要る版と更新の仕方を書き添える
+AI_REVIEW_DRY_FAIL="codex-review:model" run --out .review-reports/m1
+grep -q '^FAILED codex-review (モデルを使えない（model_not_found）。gpt-6.2-\* は Codex CLI 0.169.0 以上が要る' .review-reports/m1/status.txt && ok "model_not_found なら、Codex CLI 0.169.0 以上が要ると書く" || ng "m1: $(grep codex-review .review-reports/m1/status.txt)"
+grep -q '混み合い' .review-reports/m1/status.txt && ng "model_not_found で回し直した" || ok "model_not_found では回し直さない"
+AI_REVIEW_DRY_FAIL="codex-review:other" run --out .review-reports/m2
+grep -q 'model_not_found' .review-reports/m2/status.txt && ng "ほかの失敗に版の案内を付けた" || ok "ほかの失敗には版の案内を付けない"
 unset AI_REVIEW_CAPACITY_WAIT
 
 echo "== PASS $pass / FAIL $fail =="

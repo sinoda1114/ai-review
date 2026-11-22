@@ -40,7 +40,7 @@
 # 環境変数 AI_REVIEW_DRY_RUN=1 で実コマンドを起動せずダミー出力を書く（テスト用）。
 #   AI_REVIEW_DRY_TABLE_MISSING=1|once  自前観点のダミー出力から判定表の 1 行目を抜く（once は初回だけ）
 #   AI_REVIEW_DRY_VERDICT=PASS|MUST-ADDRESS|BLOCK  自前観点のダミー出力の結論
-#   AI_REVIEW_DRY_FAIL="<名前>:capacity|mention|other,..."  そのレビュアーを初回だけ失敗させる（capacity は Codex の混み合いの
+#   AI_REVIEW_DRY_FAIL="<名前>:capacity|model|mention|other,..."  そのレビュアーを初回だけ失敗させる（capacity は Codex の混み合いの
 #     エラー行を出す。mention は「at capacity」という語を含むだけの別の失敗）
 #   AI_REVIEW_DRY_FAIL_RETRY=1|empty  回し直しも同じように失敗させる（empty は終了コード 0・空の出力）
 set -uo pipefail
@@ -51,6 +51,7 @@ CLAUDE_EFFORT="high"
 CODEX_MODEL="gpt-6.2-sol"
 CODEX_DEEP_MODEL="gpt-6.2-astra"
 CODEX_EFFORT="high"
+CODEX_MIN_VERSION="0.169.0"   # gpt-6.2-* に要る Codex CLI の版（失敗したときの案内に使う）
 # 自前観点に許す道具（読み取り + 読み取り系の git サブコマンドのみ）と、明示的に禁じる道具。
 # Bash(git:*) にしない: `git -c core.fsmonitor=<cmd> status` などで任意のコマンドを実行でき、
 # git config で共有の .git/config（ai-review.skip、core.hooksPath）も書き換えられる（2026-09-23 に実測）。
@@ -506,6 +507,7 @@ dry_fail() {
   : > "$out/$1.md"; printf '%s\0' sleep 0 > "$out/$1.cmd"
   case "$(dry_fail_mode "$1")" in
     capacity) echo "ERROR: Selected model is at capacity. Please try a different model." >> "$out/$1.err" ;;
+    model) printf 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}\n' >> "$out/$1.err" ;;
     mention) printf 'note: the docs say "at capacity" sometimes\nERROR: dry run failure\n' >> "$out/$1.err" ;;
     *) echo "ERROR: dry run failure" >> "$out/$1.err" ;;
   esac
@@ -551,47 +553,6 @@ if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ]; then
   [ -n "$codex_bin" ] || codex_bin="codex"
 fi
 
-# gpt-6.2-* は Codex CLI 0.169.0 以上が要る（それより前は model_not_found で毎回失敗する）。
-# 版は codex 自身の「codex-cli X.Y.Z」の行だけから読む（ラッパーの警告などに別の数字が混ざりうる）。
-# 0.169.0 のプレリリースは古い版とみなす。読めなければ起動して、失敗は従来どおり FAILED で拾う。
-# 確かめるのは Codex を起動すると決まった後だけ（start_codex の中）、レビューを動かす場所（$run_cwd）で、
-# CODEX_VERSION_TIMEOUT 秒で打ち切る（応答しない CLI でゲート全体を止めない）。結果は 1 回分を使い回す
-CODEX_MIN_VERSION="0.169.0"
-CODEX_VERSION_TIMEOUT=10
-codex_version=""; codex_version_checked=0
-check_codex_version() {
-  [ $codex_version_checked -eq 1 ] && return
-  codex_version_checked=1
-  local vfile pid i
-  vfile="$(mktemp "${TMPDIR:-/tmp}/ai-review-codex-version.XXXXXX")" || return
-  if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ]; then
-    if [ -n "${AI_REVIEW_DRY_CODEX_VERSION_HANG:-}" ]; then
-      ( cd "$run_cwd" && exec sleep 60 ) > "$vfile" 2>/dev/null &
-    else
-      ( cd "$run_cwd" && printf '%s\n' "${AI_REVIEW_DRY_CODEX_VERSION:-codex-cli $CODEX_MIN_VERSION}" ) > "$vfile" 2>/dev/null &
-    fi
-  else
-    ( cd "$run_cwd" && exec "$codex_bin" --version ) < /dev/null > "$vfile" 2>/dev/null &
-  fi
-  pid=$!; i=0
-  while kill -0 "$pid" 2>/dev/null && [ $i -lt $((CODEX_VERSION_TIMEOUT * 10)) ]; do sleep 0.1; i=$((i + 1)); done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-    echo "codex-version: 読めない（${CODEX_VERSION_TIMEOUT} 秒で応答なし） (cwd=$run_cwd)" >> "$status"; rm -f "$vfile"; return
-  fi
-  wait "$pid" 2>/dev/null
-  codex_version="$(sed -n 's/^codex-cli \([^ ]*\).*/\1/p' "$vfile" | head -1)"; rm -f "$vfile"
-  echo "codex-version: ${codex_version:+codex-cli }${codex_version:-読めない} (cwd=$run_cwd)" >> "$status"
-}
-codex_too_old() {  # 0 = 要る版より古い
-  local noplus="${codex_version%%+*}" core lowest   # +build は数えない。-プレリリースは数える
-  core="${noplus%%-*}"
-  printf '%s\n' "$core" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || return 1
-  if [ "$core" = "$CODEX_MIN_VERSION" ]; then [ "$noplus" != "$core" ]; return; fi
-  lowest="$(printf '%s\n%s\n' "$core" "$CODEX_MIN_VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)"
-  [ "$lowest" = "$core" ]
-}
-
 # 自前観点を起動する。<name> <model> <prompt>
 # プロンプトは -p の直後に置く（--allowedTools などの可変長オプションの後ろに置くと、道具名として飲み込まれる）
 start_own() {
@@ -621,10 +582,6 @@ start_codex() {
     [ "$d" = "$tree_top" ] || [ "$d" = "/" ] && break
     d="$(dirname "$d")"
   done
-  check_codex_version
-  if codex_too_old; then
-    echo "UNAVAILABLE $name (Codex CLI $CODEX_MIN_VERSION 以上が要る。いまは ${codex_version}。codex update などで更新する)" >> "$status"; return
-  fi
   if [ "$mode" = "local" ]; then
     run_bg "$name" "$codex_bin" exec review --uncommitted --skip-git-repo-check \
         -m "$model" -c model_reasoning_effort="\"$CODEX_EFFORT\"" -c sandbox_mode="\"read-only\"" -c notify=[] -c mcp_servers={} -c project_doc_max_bytes=0 \
@@ -821,7 +778,12 @@ for n in $names; do
   elif is_failed "$n"; then
     # 途中まで出力があっても完成品ではない。突合に使わせない。
     [ -s "$out/$n.md" ] && { mv "$out/$n.md" "$out/$n.partial.md" 2>/dev/null || true; : > "$out/$n.md"; }
-    echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md)" >> "$status"; rc_all=1
+    # gpt-6.2-* を古い Codex CLI で呼ぶと model_not_found で落ちる（エラー行の形だけを見る）
+    if tail -n 20 "$out/$n.err" 2>/dev/null | grep -E '^(ERROR|error)[: ].*"code" *: *"model_not_found"' >/dev/null; then
+      echo "FAILED $n (モデルを使えない（model_not_found）。gpt-6.2-* は Codex CLI $CODEX_MIN_VERSION 以上が要る。codex update などで更新する。$n.err 参照)" >> "$status"; rc_all=1
+    else
+      echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md)" >> "$status"; rc_all=1
+    fi
   elif case "$n" in codex-*) [ ! -f "$out/$n.used-o" ] ;; *) false ;; esac; then
     # Codex は -o の最終回答が正。stdout の進捗ログだけが残った状態を ok にしない。
     [ -s "$out/$n.md" ] && { mv "$out/$n.md" "$out/$n.partial.md" 2>/dev/null || true; : > "$out/$n.md"; }
