@@ -1116,6 +1116,8 @@ AI_REVIEW_DRY_FAIL="own-review:model" run --out .review-reports/m3
 grep -q '^FAILED own-review (非ゼロ終了' .review-reports/m3/status.txt && ! grep -q 'FAILED own-review (モデルを使えない' .review-reports/m3/status.txt && ok "版の案内は Codex のレビュアーだけ" || ng "m3: $(grep own-review .review-reports/m3/status.txt)"
 AI_REVIEW_DRY_FAIL="codex-review:modeltext" run --out .review-reports/m4
 grep -q '^FAILED codex-review (モデルを使えない' .review-reports/m4/status.txt && ok "平文のエラー文でも版の案内を付ける" || ng "m4: $(grep codex-review .review-reports/m4/status.txt)"
+AI_REVIEW_DRY_FAIL="codex-review:modelcolor" run --out .review-reports/m5
+grep -q '^FAILED codex-review (モデルを使えない' .review-reports/m5/status.txt && ok "色付きのエラー行でも版の案内を付ける" || ng "m5: $(grep codex-review .review-reports/m5/status.txt)"
 unset AI_REVIEW_CAPACITY_WAIT
 
 echo "== PASS $pass / FAIL $fail =="

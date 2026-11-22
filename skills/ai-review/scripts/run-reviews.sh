@@ -40,7 +40,7 @@
 # 環境変数 AI_REVIEW_DRY_RUN=1 で実コマンドを起動せずダミー出力を書く（テスト用）。
 #   AI_REVIEW_DRY_TABLE_MISSING=1|once  自前観点のダミー出力から判定表の 1 行目を抜く（once は初回だけ）
 #   AI_REVIEW_DRY_VERDICT=PASS|MUST-ADDRESS|BLOCK  自前観点のダミー出力の結論
-#   AI_REVIEW_DRY_FAIL="<名前>:capacity|model|modeltext|mention|other,..."  そのレビュアーを初回だけ失敗させる（capacity は Codex の混み合いの
+#   AI_REVIEW_DRY_FAIL="<名前>:capacity|model|modeltext|modelcolor|mention|other,..."  そのレビュアーを初回だけ失敗させる（capacity は Codex の混み合いの
 #     エラー行を出す。mention は「at capacity」という語を含むだけの別の失敗）
 #   AI_REVIEW_DRY_FAIL_RETRY=1|empty  回し直しも同じように失敗させる（empty は終了コード 0・空の出力）
 set -uo pipefail
@@ -507,8 +507,9 @@ dry_fail() {
   : > "$out/$1.md"; printf '%s\0' sleep 0 > "$out/$1.cmd"
   case "$(dry_fail_mode "$1")" in
     capacity) echo "ERROR: Selected model is at capacity. Please try a different model." >> "$out/$1.err" ;;
+    modelcolor) printf '\033[31mERROR:\033[0m {"error":{"code":"model_not_found"}}\n' >> "$out/$1.err" ;;
     modeltext) echo "ERROR: The 'gpt-6.2-sol' model is not supported when using Codex with a ChatGPT account." >> "$out/$1.err" ;;
-    model) printf 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}\n' >> "$out/$1.err" ;;
+    model) printf 'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"No access to this model.","code":"model_not_found"}}\n' >> "$out/$1.err" ;;
     mention) printf 'note: the docs say "at capacity" sometimes\nERROR: dry run failure\n' >> "$out/$1.err" ;;
     *) echo "ERROR: dry run failure" >> "$out/$1.err" ;;
   esac
@@ -781,7 +782,7 @@ for n in $names; do
     [ -s "$out/$n.md" ] && { mv "$out/$n.md" "$out/$n.partial.md" 2>/dev/null || true; : > "$out/$n.md"; }
     # gpt-6.2-* を古い Codex CLI で呼ぶと model_not_found で落ちる（エラー行の形だけを見る）
     if case "$n" in codex-*) true ;; *) false ;; esac \
-      && tail -n 20 "$out/$n.err" 2>/dev/null | grep -E '^(ERROR|error)[: ].*("code" *: *"model_not_found"|model is not supported when using Codex)' >/dev/null; then
+      && tail -n 20 "$out/$n.err" 2>/dev/null | LC_ALL=C tr -d '\033' | grep -E '^(\[[0-9;]*m)*(ERROR|error)[: ].*("code" *: *"model_not_found"|model is not supported when using Codex)' >/dev/null; then
       echo "FAILED $n (モデルを使えない（model_not_found）。gpt-6.2-* は Codex CLI $CODEX_MIN_VERSION 以上が要る。codex --version が古ければ更新し、新しければアカウントでそのモデルを使えるかを確かめる。$n.err 参照)" >> "$status"; rc_all=1
     else
       echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md)" >> "$status"; rc_all=1
