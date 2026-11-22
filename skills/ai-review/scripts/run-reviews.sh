@@ -783,10 +783,11 @@ for n in $names; do
     # 途中まで出力があっても完成品ではない。突合に使わせない。
     [ -s "$out/$n.md" ] && { mv "$out/$n.md" "$out/$n.partial.md" 2>/dev/null || true; : > "$out/$n.md"; }
     # gpt-6.2-* を古い Codex CLI で呼ぶと model_not_found で落ちる。出し方（JSON・改行入り・平文・色付き）は版で
-    # 違うので、エラー出力の末尾のどこかにあれば案内する（すでに失敗した実行に書き添えるだけなので、緩くてよい）
+    # 違うので、エラー出力の末尾のどこかにあれば書き添える。レビュー中のログに同じ語が出ることもあるので、
+    # 原因とは断定せず「語がある」という事実と、そうだった場合の手当てだけを書く
     if case "$n" in codex-*) true ;; *) false ;; esac \
       && tail -n 50 "$out/$n.err" 2>/dev/null | grep -iE 'model_not_found|model is not supported' >/dev/null; then
-      echo "FAILED $n (モデルを使えない（model_not_found）。gpt-6.2-* は Codex CLI $CODEX_MIN_VERSION 以上が要る。codex --version が古ければ更新し、新しければアカウントでそのモデルを使えるかを確かめる。$n.err 参照)" >> "$status"; rc_all=1
+      echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md。エラー出力に model_not_found の語がある: モデルを使えなかったのなら、gpt-6.2-* は Codex CLI $CODEX_MIN_VERSION 以上が要る。codex --version が古ければ更新し、新しければアカウントでそのモデルを使えるかを確かめる)" >> "$status"; rc_all=1
     else
       echo "FAILED $n (非ゼロ終了。$n.err 参照。途中出力は $n.partial.md)" >> "$status"; rc_all=1
     fi

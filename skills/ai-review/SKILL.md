@@ -311,7 +311,7 @@ git config --global core.hooksPath ~/.git-hooks
 | `TABLE-INCOMPLETE` | 再実行でも判定表が埋まらなかった。欠けたファイルは記録時に「判定なし（要確認）」の MUST-ADDRESS 項目になる。§3.9 で片づける（そのファイルを自分で読んで理由を書き、検証を通す） |
 | `record-gate.sh` が「〜の結論は … ですが、source に … を含む項目がありません」で止まる | そのレビュアーの BLOCK / MUST-ADDRESS の指摘を書き起こし忘れている。`items.json` に足して記録し直す |
 | `record-gate.sh` が「レビューした SHA と HEAD が違う」「reviewed_sha.review が見つからない」で止まる | 前者はレビュー中に HEAD が動いた。後者は `--report` の渡し忘れ。記録せず、前者は回し直し、後者は `--report` を付けて記録し直す |
-| `status.txt` に「モデルを使えない（model_not_found）」 | そのレビュアーだけが未取得。Codex CLI が古い（gpt-6.2-* は 0.169.0 以上が要る）か、アカウントでそのモデルを使えない。`codex --version` を確かめ、古ければ更新（`codex update`、npm 版は `npm install -g @openai/codex`）して回し直すよう案内する。ほかのレビュアーの結果はそのまま使い、二重化が欠けたことを結論に書く |
+| `status.txt` の FAILED に「model_not_found の語がある」 | そのレビュアーだけが未取得。原因とは限らない（レビュー中のログに同じ語が出ることもある）ので、`.err` で確かめる。モデルを使えなかったのなら、Codex CLI が古い（gpt-6.2-* は 0.169.0 以上が要る）か、アカウントでそのモデルを使えない。`codex --version` が古ければ更新（`codex update`、npm 版は `npm install -g @openai/codex`）して回し直すよう案内する。ほかのレビュアーの結果はそのまま使い、二重化が欠けたことを結論に書く |
 | `codex` 未導入・失敗・タイムアウト | その旨を明記し Claude 側だけで続行。二重化できていないことを結論に書く |
 | `claude` 側が失敗・タイムアウト | 同様に Codex 側だけで続行 |
 | 全部失敗 | 下限が `block` になる。そのまま記録して中断 |
