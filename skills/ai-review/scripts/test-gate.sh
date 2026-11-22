@@ -138,6 +138,18 @@ AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_ESCALATION=real bash "$RR" --out .review-repor
 grep -q 'WARN: escalation-check.sh が失敗' .review-reports/r3bad/status.txt || ng "準備: escalation-check.sh が失敗していない"
 grep -q '^started codex' .review-reports/r3bad/status.txt && ng "秘密情報の判定ができないのに Codex を起動した" || ok "秘密情報の判定ができなければ Codex を起動しない（止める側）"
 G rm -q .env.local; G commit -qm unsecret
+# gpt-6.2-* は Codex CLI 0.169.0 以上が要る。古い版なら起動せず、更新が要ると書く
+for v in "codex-cli 0.169.0-alpha.3" "$(printf 'node v9.9.9 is deprecated\ncodex-cli 0.168.2')"; do
+  AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_CODEX_VERSION="$v" bash "$RR" --out .review-reports/r3pre >/dev/null 2>&1
+  grep -q '^started codex' .review-reports/r3pre/status.txt && ng "古い版（${v}）で Codex を起動した" || ok "版は codex-cli の行だけから読み、0.169.0 のプレリリースは古い版とみなす（${v}）"
+done
+AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_CODEX_VERSION="codex-cli 0.168.2" bash "$RR" --out .review-reports/r3old --deep >/dev/null 2>&1
+grep -q '^started codex' .review-reports/r3old/status.txt && ng "Codex CLI 0.168.2 で Codex を起動した" || ok "Codex CLI が 0.169.0 未満なら Codex を起動しない"
+grep -q '^UNAVAILABLE codex-review (Codex CLI 0.169.0 以上が要る。いまは 0.168.2' .review-reports/r3old/status.txt && grep -q '^UNAVAILABLE codex-astra (Codex CLI 0.169.0' .review-reports/r3old/status.txt && ok "古い版は未取得として残し、要る版と今の版を書く" || ng "r3old status: $(grep -i codex .review-reports/r3old/status.txt)"
+for v in "codex-cli 0.169.0" "codex-cli 0.171.0" "codex-cli 1.0.0" "unknown" "$(printf 'update 0.1.0 -> 0.171.0\ncodex-cli 0.171.0')"; do
+  AI_REVIEW_DRY_RUN=1 AI_REVIEW_DRY_CODEX_VERSION="$v" bash "$RR" --out .review-reports/r3new >/dev/null 2>&1
+  grep -q '^started codex-review' .review-reports/r3new/status.txt && ok "「${v}」なら Codex を起動する" || ng "「${v}」で起動しない: $(grep -i codex .review-reports/r3new/status.txt)"
+done
 [ "$(grep -c '^started ' .review-reports/r3n/status.txt)" = "3" ] && ok "--deep --no-codex は Claude の 3 本だけ" || ng "no-codex の起動数"
 grep -q '^UNAVAILABLE codex-review' .review-reports/r3n/status.txt && ok "--no-codex を明示しても UNAVAILABLE（二重化の欠け）として残す" || ng "--no-codex が未取得にならない"
 printf 'x\n' > .review-reports/r3n/reviewed_base.security

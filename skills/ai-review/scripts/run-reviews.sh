@@ -551,6 +551,25 @@ if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ]; then
   [ -n "$codex_bin" ] || codex_bin="codex"
 fi
 
+# gpt-6.2-* は Codex CLI 0.169.0 以上が要る（それより前は model_not_found で毎回失敗する）。
+# 版は codex 自身の「codex-cli X.Y.Z」の行だけから読む（ラッパーの警告などに別の数字が混ざりうる）。
+# 0.169.0 のプレリリースは古い版とみなす。読めなければ起動して、失敗は従来どおり FAILED で拾う
+CODEX_MIN_VERSION="0.169.0"
+codex_version_out=""
+if [ "${AI_REVIEW_DRY_RUN:-0}" = "1" ]; then
+  codex_version_out="${AI_REVIEW_DRY_CODEX_VERSION:-codex-cli $CODEX_MIN_VERSION}"
+elif [ -n "$codex_bin" ]; then
+  codex_version_out="$("$codex_bin" --version < /dev/null 2>/dev/null)"
+fi
+codex_version="$(printf '%s\n' "$codex_version_out" | sed -n 's/^codex-cli \([^ ]*\).*/\1/p' | head -1)"
+codex_too_old() {  # 0 = 要る版より古い
+  local core="${codex_version%%-*}" lowest
+  printf '%s\n' "$core" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+  if [ "$core" = "$CODEX_MIN_VERSION" ]; then [ "$codex_version" != "$core" ]; return; fi
+  lowest="$(printf '%s\n%s\n' "$core" "$CODEX_MIN_VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)"
+  [ "$lowest" = "$core" ]
+}
+
 # 自前観点を起動する。<name> <model> <prompt>
 # プロンプトは -p の直後に置く（--allowedTools などの可変長オプションの後ろに置くと、道具名として飲み込まれる）
 start_own() {
@@ -569,6 +588,9 @@ start_codex() {
   if [ -n "$codex_off" ]; then echo "UNAVAILABLE $name (codex disabled: $codex_off)" >> "$status"; return; fi
   if [ $use_codex -ne 1 ]; then echo "UNAVAILABLE $name (codex disabled: --no-codex)" >> "$status"; return; fi
   if [ -z "$codex_bin" ]; then echo "UNAVAILABLE $name (codex not found)" >> "$status"; return; fi
+  if codex_too_old; then
+    echo "UNAVAILABLE $name (Codex CLI $CODEX_MIN_VERSION 以上が要る。いまは ${codex_version}。codex update などで更新する)" >> "$status"; return
+  fi
   # レビュー対象の木に .codex/ があれば起動しない（プロジェクト設定の model_provider などで送信先や指示を
   # 差し替えられうる。どの条件で読まれるかは未確認なので、止める側に倒す）
   # 検査するのは Codex が動く木の直下（サブディレクトリから起動しても、直下の設定が読まれうる）
